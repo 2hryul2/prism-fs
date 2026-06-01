@@ -1,0 +1,19 @@
+# prism-fs 백엔드 의존성 (다음 세션 구현 예정 — 현재는 placeholder)
+# Windows 11 / Python 3.11 기준
+
+fastapi>=0.110,<0.116
+uvicorn[standard]>=0.27,<0.35
+
+# DART 수집 (py3.11 핀 — 0.3.x 는 py3.13 요구)
+OpenDartReader>=0.2.2,<0.3
+requests>=2.31
+
+# 구조화/검증
+lxml>=4.9.0
+
+# 검색 (오프라인 임베딩 + BM25). 부재 시 bigram 폴백.
+# sentence-transformers>=2.5
+# rank-bm25>=0.2.2
+
+# 테스트
+pytest>=8.0

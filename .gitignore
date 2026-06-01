@@ -1,0 +1,21 @@
+# 시크릿
+.env
+
+# 빌드 산출물
+dist/
+
+# 수집 원문/대용량 데이터 (로컬만)
+storage/
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 임시·캐시
+*.tmp
+_*.json
+docs_cache/
+*.pkl
+.pytest_cache/

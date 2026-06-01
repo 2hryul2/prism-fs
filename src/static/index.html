@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>4대 금융지주 주석 비교 에이전트 — 라이브러리</title>
+<script src="./vendor/pdfjs/pdf.min.mjs" type="module"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+  body { background: #f4f5f7; color: #1f2937; min-height: 100vh; }
+  .app { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  header { display: flex; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px; }
+  .logo { width: 36px; height: 36px; background: #0046ff; color: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+  h1 { font-size: 20px; font-weight: 700; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid #e5e7eb; }
+  .tab { padding: 12px 20px; background: none; border: none; cursor: pointer; font-size: 14px; color: #6b7280; border-bottom: 2px solid transparent; }
+  .tab.active { color: #0046ff; border-bottom-color: #0046ff; font-weight: 700; }
+
+  .panel { background: white; border-radius: 12px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+  .hidden { display: none; }
+
+  /* Matrix */
+  .matrix-wrap { overflow-x: auto; margin-top: 16px; }
+  .matrix { border-collapse: collapse; width: 100%; min-width: 700px; }
+  .matrix th, .matrix td { border: 1px solid #e5e7eb; padding: 0; text-align: center; height: 56px; }
+  .matrix th { background: #f9fafb; font-weight: 700; font-size: 13px; padding: 10px; }
+  .matrix th.company-col { text-align: left; padding-left: 14px; width: 110px; }
+  .matrix-cell { padding: 8px; cursor: pointer; transition: all 0.15s; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+  .matrix-cell.filled { background: #f0fdf4; }
+  .matrix-cell.filled:hover { background: #d1fae5; }
+  .matrix-cell.filled.selected { background: #0046ff; color: white; }
+  .matrix-cell.empty { color: #9ca3af; }
+  .matrix-cell.empty:hover { background: #f3f4f6; }
+  .matrix-cell.indexing { background: #fef3c7; }
+  .matrix-cell .badge { font-size: 11px; color: inherit; opacity: 0.75; }
+  .matrix-cell .icon { font-size: 14px; }
+  /* per-doc_type selectable pills inside a filled cell */
+  .doc-pills { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 4px 6px; }
+  .doc-pill { display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    font-size: 11px; padding: 3px 7px; border-radius: 6px; border: 1px solid #d1d5db;
+    background: #ffffff; color: #374151; cursor: pointer; transition: all 0.12s; }
+  .doc-pill:hover { border-color: #0046ff; }
+  .doc-pill.selected { background: #0046ff; border-color: #0046ff; color: #ffffff; }
+  .doc-pill.absent { color: #9ca3af; border-style: dashed; cursor: default; background: #fafafa; }
+  .doc-pill.absent:hover { border-color: #d1d5db; }
+  .doc-pill .dp-label { font-weight: 600; }
+  .doc-pill .dp-count { opacity: 0.8; }
+  .doc-pill.indexing { background: #fef3c7; border-color: #f59e0b; }
+
+  /* Selected chips */
+  .selected-bar { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px 14px; margin-bottom: 16px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-height: 56px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; background: #eff4ff; color: #1e3a8a; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .chip button { background: none; border: none; cursor: pointer; color: #1e3a8a; font-size: 14px; padding: 0 0 0 2px; }
+  .preset-btn { padding: 6px 12px; background: white; border: 1px solid #d1d5db; border-radius: 999px; font-size: 12px; cursor: pointer; }
+  .preset-btn:hover { background: #f3f4f6; }
+
+  /* Upload form */
+  .upload-form { display: grid; grid-template-columns: repeat(4, 1fr) auto; gap: 12px; align-items: end; margin-top: 16px; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: #6b7280; font-weight: 600; }
+  .field select, .field input { padding: 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+
+  /* Buttons */
+  .btn { padding: 12px 22px; background: #0046ff; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-secondary { background: white; color: #1f2937; border: 1px solid #d1d5db; }
+
+  /* Search bar */
+  .search-bar { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; }
+  .search-bar input { flex: 1; padding: 12px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
+  .search-bar select { padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; }
+
+  /* Compare grid */
+  .compare-grid { display: grid; gap: 12px; }
+  .compare-grid.cols-1 { grid-template-columns: 1fr; }
+  .compare-grid.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .compare-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .compare-panel { background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+  .panel-head { padding: 10px 14px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
+  .panel-head .top { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; }
+  .panel-head .title { font-weight: 700; font-size: 14px; margin-top: 4px; }
+  .panel-head .badge-low { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; margin-left: 6px; }
+  .pdf-area { padding: 8px; background: #4a5568; max-height: 600px; overflow-y: auto; }
+  .pdf-canvas { width: 100%; background: white; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+
+  .info-banner { background: #eff4ff; border: 1px solid #c7d6ff; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #1e3a8a; }
+  .warn-banner { background: #fef9e7; border-left: 4px solid #f59e0b; border-radius: 4px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: #78350f; }
+  .footer-note { margin-top: 20px; padding: 10px 14px; font-size: 11px; color: #6b7280; background: #f9fafb; border-radius: 6px; }
+
+  .toast { position: fixed; bottom: 24px; right: 24px; background: #1f2937; color: white; padding: 12px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+
+  /* Insight — coverage matrix */
+  .cov-table { border-collapse: collapse; width: 100%; min-width: 640px; }
+  .cov-table th, .cov-table td { border: 1px solid #e5e7eb; padding: 0; text-align: center; }
+  .cov-table th { background: #f9fafb; font-weight: 700; font-size: 13px; padding: 10px; }
+  .cov-table th.topic-col { text-align: left; padding-left: 14px; width: 160px; }
+  .cov-cell { padding: 10px 6px; min-height: 48px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; }
+  .cov-cell.dedicated { background: #0046ff; color: white; cursor: pointer; font-weight: 700; }
+  .cov-cell.dedicated:hover { background: #0036c4; }
+  .cov-cell.related { background: #e0e7ff; color: #3730a3; cursor: pointer; }
+  .cov-cell.related:hover { background: #c7d2fe; }
+  .cov-cell.none { background: #f9fafb; color: #9ca3af; }
+  .cov-cell .cov-note { font-size: 10px; opacity: 0.85; }
+  .cov-legend { display: flex; gap: 16px; margin: 12px 0; font-size: 12px; color: #374151; flex-wrap: wrap; }
+  .cov-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .cov-swatch { width: 14px; height: 14px; border-radius: 3px; display: inline-block; }
+  .topic-editor { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .topic-editor input { padding: 8px 10px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 13px; min-width: 180px; }
+
+  /* Insight — structure diff */
+  .diff-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .diff-card { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; }
+  .diff-card .head { padding: 10px 14px; background: #f9fafb; font-weight: 700; font-size: 14px; border-bottom: 1px solid #e5e7eb; }
+  .diff-list { list-style: none; max-height: 460px; overflow-y: auto; }
+  .diff-list li { padding: 10px 14px; border-bottom: 1px solid #f3f4f6; font-size: 13px; }
+  .diff-list li:last-child { border-bottom: none; }
+  .diff-list .dtitle { font-weight: 600; }
+  .diff-list .dmeta { font-size: 11px; color: #6b7280; margin-top: 2px; }
+  .pc-badge { display: inline-block; background: #fee2e2; color: #991b1b; border-radius: 999px; padding: 1px 8px; font-size: 11px; font-weight: 700; margin-left: 6px; }
+  .empty-note { padding: 16px; color: #9ca3af; font-size: 13px; text-align: center; }
+  /* KG 온톨로지 도식 (순수 HTML/CSS+SVG, 외부 의존 0). 그룹색: 회사=blue, 거버넌스=indigo, 재무=green, 위험/공시/규정=amber */
+  .kg-erd-svg { width: 100%; height: auto; max-width: 900px; display: block; margin: 0 auto; }
+  .kg-erd-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+  .kg-card { border: 1px solid #e5e7eb; border-radius: 10px; overflow: hidden; background: #fff; }
+  .kg-card .kc-head { padding: 7px 12px; font-weight: 700; font-size: 13px; display: flex; justify-content: space-between; align-items: baseline; gap: 6px; }
+  .kg-card .kc-head .kc-ko { font-size: 11px; font-weight: 600; opacity: 0.85; }
+  .kg-card .kc-attr { padding: 5px 12px; font-size: 12px; border-top: 1px solid #f3f4f6; display: flex; justify-content: space-between; gap: 8px; }
+  .kg-card .kc-attr .ka-name { font-family: 'Consolas','Courier New',monospace; color: #1f2937; }
+  .kg-card .kc-attr .ka-ko { color: #9ca3af; font-size: 11px; }
+  .kg-grp-company  .kc-head { background: #eff4ff; color: #1e3a8a; }
+  .kg-grp-gov      .kc-head { background: #e0e7ff; color: #3730a3; }
+  .kg-grp-fin      .kc-head { background: #f0fdf4; color: #166534; }
+  .kg-grp-risk     .kc-head { background: #fef3c7; color: #92400e; }
+  .kg-rel-table { border-collapse: collapse; width: 100%; min-width: 640px; margin-top: 10px; font-size: 13px; }
+  .kg-rel-table th, .kg-rel-table td { border: 1px solid #e5e7eb; padding: 7px 10px; text-align: center; }
+  .kg-rel-table th { background: #f9fafb; font-weight: 700; font-size: 12px; }
+  .kg-rel-table td.rel-name { font-family: 'Consolas','Courier New',monospace; font-weight: 600; color: #0046ff; }
+  .kg-rel-table td.rel-node { font-weight: 600; }
+  .kg-rel-table td.rel-card { color: #6b7280; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">SH</div>
+    <h1>4대 금융지주 주석 비교 에이전트</h1>
+    <span style="margin-left:auto; color:#6b7280; font-size:13px;">prism-fs · v0.1.0</span>
+  </header>
+
+  <div class="tabs">
+    <button class="tab active" onclick="showTab('library')">📚 라이브러리</button>
+    <button class="tab" onclick="showTab('upload')">⬆️ PDF 업로드</button>
+    <button class="tab" onclick="showTab('compare')">🔍 비교 조회</button>
+    <button class="tab" onclick="showTab('fs')">📈 재무제표 비교</button>
+  </div>
+
+  <!-- Tab: Library -->
+  <div id="tab-library" class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+      <div>
+        <h2 style="font-size:17px; font-weight:700;">라이브러리 매트릭스</h2>
+        <p style="color:#6b7280; font-size:13px; margin-top:4px;">셀을 클릭하면 비교 대상에 추가됩니다. 빈 셀을 클릭하면 업로드 화면으로 이동합니다.</p>
+      </div>
+      <div style="font-size:12px; color:#6b7280;" id="library-stats"></div>
+    </div>
+
+    <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
+      <button class="preset-btn" onclick="presetLatestQuarter()">전 회사·최신 분기</button>
+      <button class="preset-btn" onclick="presetSameQuarterAll()">동일 분기·모든 회사</button>
+      <button class="preset-btn" onclick="presetTimeSeries('신한')">신한 전 분기 추이</button>
+      <button class="preset-btn" onclick="clearSelection()">선택 초기화</button>
+    </div>
+
+    <div class="selected-bar" id="selected-bar">
+      <span style="color:#9ca3af; font-size:13px;">선택된 항목이 없습니다.</span>
+    </div>
+
+    <div class="matrix-wrap">
+      <table class="matrix" id="matrix-table"></table>
+    </div>
+
+    <div style="text-align:right; margin-top:16px;">
+      <button class="btn" id="btn-go-compare" onclick="goCompare()" disabled>선택한 항목으로 비교 →</button>
+    </div>
+  </div>
+
+  <!-- Tab: Upload -->
+  <div id="tab-upload" class="panel hidden">
+    <h2 style="font-size:17px; font-weight:700;">PDF 업로드</h2>
+    <p style="color:#6b7280; font-size:13px; margin-top:4px;">DART에서 다운로드한 PDF를 회사·기간을 지정하여 1개씩 업로드합니다. 업로드 후 자동으로 인덱싱이 시작됩니다.</p>
+
+    <div class="upload-form">
+      <div class="field">
+        <label>회사</label>
+        <select id="up-company">
+          <option value="신한">신한금융지주</option>
+          <option value="KB">KB금융지주</option>
+          <option value="하나">하나금융지주</option>
+          <option value="우리">우리금융지주</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>연도-분기</label>
+        <select id="up-period">
+          <option value="2025Q3">2025Q3</option>
+          <option value="2025Q2">2025Q2</option>
+          <option value="2025Q1">2025Q1</option>
+          <option value="2024FY">2024FY (사업)</option>
+          <option value="2024Q3">2024Q3</option>
+          <option value="2024Q2">2024Q2</option>
+          <option value="2024Q1">2024Q1</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>문서 유형</label>
+        <select id="up-doctype">
+          <option value="report">분기보고서 (📄)</option>
+          <option value="review">검토보고서 (📝)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>PDF 파일</label>
+        <input type="file" id="up-file" accept=".pdf">
+      </div>
+      <button class="btn" id="up-btn" onclick="doUpload()">업로드 시작</button>
+    </div>
+
+    <div id="up-status" style="margin-top:16px;"></div>
+
+    <hr style="margin:28px 0; border:none; border-top:1px solid #e5e7eb;">
+
+    <h2 style="font-size:17px; font-weight:700;">DART에서 자동 수집</h2>
+    <p style="color:#6b7280; font-size:13px; margin-top:4px;">DART OpenAPI에서 분기/검토보고서 PDF·재무제표·XBRL을 자동으로 가져와 인덱싱합니다. (<code>.env</code>의 DART_API_KEY 사용 · 수동 업로드 없이 한 번에)</p>
+
+    <div class="upload-form">
+      <div class="field">
+        <label>회사</label>
+        <select id="dc-company">
+          <option value="신한">신한금융지주</option>
+          <option value="KB">KB금융지주</option>
+          <option value="하나">하나금융지주</option>
+          <option value="우리">우리금융지주</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>연도-분기</label>
+        <select id="dc-period">
+          <option value="2026Q1">2026Q1</option>
+          <option value="2025FY">2025FY (사업)</option>
+          <option value="2025Q3">2025Q3</option>
+          <option value="2025Q2">2025Q2 (반기)</option>
+          <option value="2025Q1">2025Q1</option>
+          <option value="2024FY">2024FY (사업)</option>
+          <option value="2024Q3">2024Q3</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>본문 PDF</label>
+        <label style="font-size:13px; color:#374151; display:flex; align-items:center; gap:6px; padding:10px 0;">
+          <input type="checkbox" id="dc-report" checked style="width:auto;"> 분기보고서 본문 포함
+        </label>
+      </div>
+      <div class="field"><label>&nbsp;</label><span style="font-size:11px; color:#9ca3af; padding:10px 0;">검토보고서는 가능 시 자동 포함</span></div>
+      <button class="btn" id="dc-btn" onclick="doCollect()">DART에서 가져오기</button>
+    </div>
+
+    <div id="dc-status" style="margin-top:16px;"></div>
+  </div>
+
+  <!-- Tab: Compare -->
+  <div id="tab-compare" class="panel hidden">
+    <div class="selected-bar" id="compare-targets-bar">
+      <span style="color:#9ca3af; font-size:13px;">먼저 라이브러리 탭에서 비교 대상을 선택하세요.</span>
+    </div>
+
+    <div class="search-bar">
+      <input type="text" id="query" placeholder="예: 공정가치 / 유형자산 / 32 (주석번호)">
+      <select id="mode">
+        <option value="topic">주제 검색</option>
+        <option value="number">번호 검색</option>
+      </select>
+      <button class="btn" onclick="doCompare()">검색</button>
+    </div>
+
+    <div id="results-info"></div>
+    <div class="compare-grid cols-2" id="compare-grid"></div>
+
+    <div class="footer-note">
+      ℹ️ 이 페이지에 표시된 모든 표·숫자는 원본 PDF의 그래픽을 그대로 렌더링한 것이며, AI는 어떠한 숫자도 재구성·환산하지 않습니다.
+    </div>
+  </div>
+
+  <!-- Tab: 재무제표 비교 (fs_compare 결정론 엔진) -->
+  <div id="tab-fs" class="panel hidden">
+    <h2 style="font-size:17px; font-weight:700;">📈 재무제표 비교 <span style="font-size:12px; color:#92400e; background:#fef3c7; border-radius:999px; padding:2px 9px; font-weight:700;">결정론</span></h2>
+    <p style="color:#6b7280; font-size:13px; margin-top:4px;">연결(CFS)/별도(OFS) 재무제표를 원문 그대로 비교합니다. 증감·차이·비율 등 <strong>파생값은 결정론 계산</strong>이며 각 값에 <strong>ⓘ 계산식 근거</strong>가 붙습니다. (단위 환산·AI 재구성 없음)</p>
+
+    <div style="display:flex; gap:6px; margin:12px 0; flex-wrap:wrap;">
+      <button class="preset-btn fs-view on" data-view="delta" onclick="showFsView('delta')">① 시계열 증감 (QoQ/YoY)</button>
+      <button class="preset-btn fs-view" data-view="cons" onclick="showFsView('cons')">② 연결 vs 별도 (자회사효과)</button>
+      <button class="preset-btn fs-view" data-view="bench" onclick="showFsView('bench')">③ 4사 벤치마킹</button>
+      <button class="preset-btn fs-view" data-view="ratio" onclick="showFsView('ratio')">④ 안전 구조비율</button>
+    </div>
+
+    <div id="fs-controls" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;"></div>
+    <div id="fs-result"></div>
+
+    <div class="footer-note">
+      🔒 원문 보존(<code>thstrm/frmtrm/frmtrm_q</code>) · 단위 환산 0 · 파생값은 결정론 계산 + 계산식 provenance · 출처 DART <code>fnlttSinglAcntAll → fs_structured.json</code>.
+    </div>
+  </div>
+
+</div>
+
+<div id="fs-pop" style="position:fixed; z-index:50; max-width:360px; background:#111827; color:#f3f4f6; border-radius:8px; padding:11px 13px; font-size:12px; line-height:1.6; box-shadow:0 6px 24px rgba(0,0,0,.3); display:none;">
+  <span style="float:right; cursor:pointer; color:#9ca3af;" onclick="document.getElementById('fs-pop').style.display='none'">✕</span>
+  <div id="fs-pop-body"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+  import * as pdfjsLib from "./vendor/pdfjs/pdf.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs/pdf.worker.min.mjs";
+  window.pdfjsLib = pdfjsLib;
+</script>
+<script>
+  const API = "";
+  const COMPANIES = ["신한", "KB", "하나", "우리"];
+  let LIBRARY = { matrix: {}, available_periods: [], entries: [] };
+  let SELECTED = new Set();      // "회사/기간#doc_type" 문자열들 (doc_type: report|review)
+  let INDEX_STATUS_MAP = {};     // "회사/기간/doc_type" -> status
+
+  const DOC_TYPES = ["report", "review"];
+  const DOC_LABEL = { report: "분기", review: "검토" };
+  const DOC_ICON = { report: "📄", review: "📝" };
+  const DOC_FULL = { report: "분기보고서", review: "검토보고서" };
+
+  // SELECTED 키 헬퍼: "회사/기간#doc_type"
+  function selKey(company, period, docType) { return `${company}/${period}#${docType}`; }
+  function parseSelKey(key) {
+    const [cp, docType] = key.split("#");
+    const [company, period] = cp.split("/");
+    return { company, period, docType: docType || "report" };
+  }
+  // 해당 셀의 doc_type 이 실제 인덱싱돼 있는지
+  function docIndexed(entry, docType) {
+    if (!entry) return false;
+    return docType === "review" ? !!entry.review_indexed : !!entry.indexed;
+  }
+  function docNotesCount(entry, docType) {
+    if (!entry) return null;
+    return docType === "review" ? entry.review_notes_count : entry.notes_count;
+  }
+
+  // ----- Tabs -----
+  function showTab(name) {
+    document.querySelectorAll(".tab").forEach((t, i) => {
+      t.classList.toggle("active", t.textContent.includes({library:"라이브러리", upload:"업로드", compare:"비교", fs:"재무제표"}[name]));
+    });
+    ["library","upload","compare","fs"].forEach(n => {
+      const el = document.getElementById(`tab-${n}`);
+      if (el) el.classList.toggle("hidden", n !== name);
+    });
+    if (name === "library") loadLibrary();
+    if (name === "compare") renderTargetsBar();
+    if (name === "fs") loadFsTab();
+  }
+
+  // ----- Library -----
+  async function loadLibrary() {
+    const [libRes, statusRes] = await Promise.all([
+      fetch(`${API}/api/library`).then(r => r.json()),
+      fetch(`${API}/api/library/index/status`).then(r => r.json()),
+    ]);
+    LIBRARY = libRes;
+    INDEX_STATUS_MAP = Object.fromEntries((statusRes.items || []).map(i => [i.key, i]));
+    renderMatrix();
+    renderStats();
+    renderSelectedBar();
+  }
+
+  function renderStats() {
+    document.getElementById("library-stats").textContent =
+      `총 ${LIBRARY.total_files}개 파일 · 인덱싱 완료 ${LIBRARY.total_indexed}개`;
+  }
+
+  function renderMatrix() {
+    const periods = LIBRARY.available_periods.length > 0
+      ? LIBRARY.available_periods
+      : ["2024Q3", "2024Q4", "2025Q1", "2025Q2", "2025Q3"];
+
+    const table = document.getElementById("matrix-table");
+    let html = `<tr><th class="company-col">회사 \\ 분기</th>` +
+      periods.map(p => `<th>${p}</th>`).join("") + `</tr>`;
+
+    for (const c of COMPANIES) {
+      html += `<tr><th class="company-col">${c}</th>`;
+      for (const p of periods) {
+        const entry = LIBRARY.entries.find(e => e.company === c && e.period === p);
+        // 셀이 채워진 것으로 간주: report 또는 review 중 하나라도 인덱싱됨
+        const anyIndexed = docIndexed(entry, "report") || docIndexed(entry, "review");
+        const anyRunning = DOC_TYPES.some(dt => {
+          const st = INDEX_STATUS_MAP[`${c}/${p}/${dt}`];
+          return st && st.status === "running";
+        });
+
+        let inner, cls;
+        if (entry && (anyIndexed || anyRunning)) {
+          // doc_type 별 선택 가능한 pill 2줄 (분기 / 검토)
+          inner = `<div class="doc-pills">` + DOC_TYPES.map(dt => {
+            const indexed = docIndexed(entry, dt);
+            const st = INDEX_STATUS_MAP[`${c}/${p}/${dt}`];
+            const running = st && st.status === "running";
+            const isSel = SELECTED.has(selKey(c, p, dt));
+            if (running) {
+              return `<div class="doc-pill indexing">
+                        <span class="dp-label">${DOC_ICON[dt]} ${DOC_LABEL[dt]}</span>
+                        <span class="dp-count">${Math.round((st.progress||0)*100)}%</span></div>`;
+            }
+            if (!indexed) {
+              // 미보유 doc_type → 비활성 표시 (검토 –)
+              return `<div class="doc-pill absent">
+                        <span class="dp-label">${DOC_ICON[dt]} ${DOC_LABEL[dt]}</span>
+                        <span class="dp-count">–</span></div>`;
+            }
+            const cnt = docNotesCount(entry, dt);
+            return `<div class="doc-pill${isSel ? ' selected' : ''}"
+                        onclick="onDocClick('${c}','${p}','${dt}',event)">
+                      <span class="dp-label">${isSel ? '✓' : DOC_ICON[dt]} ${DOC_LABEL[dt]}</span>
+                      <span class="dp-count">${cnt != null ? cnt : '–'}</span></div>`;
+          }).join("") + `</div>`;
+          cls = anyRunning ? "indexing" : "filled";
+        } else {
+          inner = `<div class="icon">＋</div><div class="badge">업로드</div>`;
+          cls = "empty";
+        }
+
+        const onCell = cls === "empty" ? ` onclick="onEmptyCellClick('${c}','${p}')"` : "";
+        html += `<td><div class="matrix-cell ${cls}"${onCell}>${inner}</div></td>`;
+      }
+      html += `</tr>`;
+    }
+    table.innerHTML = html;
+  }
+
+  // 빈 셀 클릭 → 업로드 탭으로 이동
+  window.onEmptyCellClick = function(company, period) {
+    document.getElementById("up-company").value = company;
+    document.getElementById("up-period").value = period;
+    showTab("upload");
+  };
+
+  // doc_type pill 클릭 → 해당 (회사/기간/doc_type) 선택 토글
+  window.onDocClick = function(company, period, docType, ev) {
+    if (ev) ev.stopPropagation();
+    const key = selKey(company, period, docType);
+    if (SELECTED.has(key)) SELECTED.delete(key);
+    else SELECTED.add(key);
+    renderMatrix();
+    renderSelectedBar();
+  };
+
+  function renderSelectedBar() {
+    const bar = document.getElementById("selected-bar");
+    const btn = document.getElementById("btn-go-compare");
+    if (SELECTED.size === 0) {
+      bar.innerHTML = `<span style="color:#9ca3af; font-size:13px;">선택된 항목이 없습니다.</span>`;
+      btn.disabled = true;
+      return;
+    }
+    bar.innerHTML = [...SELECTED].map(k => {
+      const { company, period, docType } = parseSelKey(k);
+      return `<span class="chip">${DOC_ICON[docType]} ${company}·${period}·${DOC_LABEL[docType]}<button onclick="removeSelection('${k}')">×</button></span>`;
+    }).join("") + `<span style="margin-left:auto; font-size:12px; color:#6b7280;">${SELECTED.size}개 선택됨</span>`;
+    btn.disabled = false;
+  }
+
+  window.removeSelection = function(key) {
+    SELECTED.delete(key);
+    renderMatrix();
+    renderSelectedBar();
+  };
+
+  // ----- Presets -----
+  // 셀의 기본 doc_type: report 인덱싱되어 있으면 report, 아니면 review (없으면 null)
+  function defaultDocType(company, period) {
+    const entry = LIBRARY.entries.find(e => e.company === company && e.period === period);
+    if (docIndexed(entry, "report")) return "report";
+    if (docIndexed(entry, "review")) return "review";
+    return null;
+  }
+  function addDefaultSelection(company, period) {
+    const dt = defaultDocType(company, period);
+    if (dt) SELECTED.add(selKey(company, period, dt));
+  }
+
+  window.presetLatestQuarter = function() {
+    const periods = LIBRARY.available_periods;
+    if (periods.length === 0) return toast("라이브러리가 비어 있습니다.");
+    const latest = periods[periods.length - 1];
+    SELECTED.clear();
+    for (const c of COMPANIES) {
+      if ((LIBRARY.matrix[c] || []).includes(latest)) addDefaultSelection(c, latest);
+    }
+    renderMatrix();
+    renderSelectedBar();
+  };
+
+  window.presetSameQuarterAll = function() {
+    const periodCount = {};
+    for (const c of COMPANIES) {
+      for (const p of LIBRARY.matrix[c] || []) {
+        periodCount[p] = (periodCount[p] || 0) + 1;
+      }
+    }
+    const best = Object.entries(periodCount).sort((a, b) => b[1] - a[1])[0];
+    if (!best) return toast("라이브러리가 비어 있습니다.");
+    const p = best[0];
+    SELECTED.clear();
+    for (const c of COMPANIES) {
+      if ((LIBRARY.matrix[c] || []).includes(p)) addDefaultSelection(c, p);
+    }
+    renderMatrix();
+    renderSelectedBar();
+  };
+
+  window.presetTimeSeries = function(company) {
+    SELECTED.clear();
+    for (const p of LIBRARY.matrix[company] || []) {
+      addDefaultSelection(company, p);
+    }
+    renderMatrix();
+    renderSelectedBar();
+  };
+
+  window.clearSelection = function() {
+    SELECTED.clear();
+    renderMatrix();
+    renderSelectedBar();
+  };
+
+  window.goCompare = function() {
+    if (SELECTED.size === 0) return;
+    showTab("compare");
+  };
+
+  // ----- Upload -----
+  window.doUpload = async function() {
+    const company = document.getElementById("up-company").value;
+    const period = document.getElementById("up-period").value;
+    const docType = document.getElementById("up-doctype").value;
+    const file = document.getElementById("up-file").files[0];
+    if (!file) return toast("PDF 파일을 선택하세요.");
+
+    const status = document.getElementById("up-status");
+    status.innerHTML = `<div class="info-banner">업로드 중... ${file.name} (${DOC_FULL[docType]})</div>`;
+
+    const form = new FormData();
+    form.append("file", file);
+    form.append("company", company);
+    form.append("period", period);
+    form.append("doc_type", docType);
+
+    const res = await fetch(`${API}/api/library/upload`, { method: "POST", body: form });
+    const data = await res.json();
+    if (!res.ok) {
+      status.innerHTML = `<div class="warn-banner">업로드 실패: ${data.detail || "알 수 없는 오류"}</div>`;
+      return;
+    }
+
+    status.innerHTML = `<div class="info-banner">✓ 업로드 완료 (${data.pages}p, ${DOC_FULL[docType]}). 인덱싱을 시작합니다...</div>`;
+    await fetch(`${API}/api/library/index/${company}/${period}?doc_type=${docType}`, { method: "POST" });
+    pollIndexProgress(company, period, docType);
+  };
+
+  async function pollIndexProgress(company, period, docType) {
+    const status = document.getElementById("up-status");
+    const docLabel = DOC_FULL[docType] || "분기보고서";
+    const statusKey = `${company}/${period}/${docType}`;
+    const interval = setInterval(async () => {
+      const res = await fetch(`${API}/api/library/index/status`).then(r => r.json());
+      const item = (res.items || []).find(i => i.key === statusKey);
+      if (!item) return;
+      const pct = Math.round((item.progress || 0) * 100);
+      if (item.status === "done") {
+        clearInterval(interval);
+        status.innerHTML = `<div class="info-banner">✓ ${company}·${period}·${docLabel} 인덱싱 완료 (주석 ${item.notes_extracted}개${item.detected_unit ? ', 단위: ' + item.detected_unit : ''}).</div>`;
+        loadLibrary();   // 매트릭스에 새 doc_type 반영
+      } else if (item.status === "error") {
+        clearInterval(interval);
+        status.innerHTML = `<div class="warn-banner">인덱싱 실패 (${docLabel}): ${item.error}</div>`;
+      } else {
+        status.innerHTML = `<div class="info-banner">인덱싱 중 (${docLabel})... ${pct}%</div>`;
+      }
+    }, 800);
+  }
+
+  // ----- DART 자동 수집 -----
+  window.doCollect = async function() {
+    const company = document.getElementById("dc-company").value;
+    const period = document.getElementById("dc-period").value;
+    const includeReport = document.getElementById("dc-report").checked;
+    const status = document.getElementById("dc-status");
+    const btn = document.getElementById("dc-btn");
+    btn.disabled = true;
+    status.innerHTML = `<div class="info-banner">DART에서 ${company}·${period} 수집 시작... (네트워크 상황에 따라 수십 초 소요될 수 있습니다)</div>`;
+
+    let res, data;
+    try {
+      res = await fetch(`${API}/api/library/collect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company, period, include_report_pdf: includeReport }),
+      });
+      data = await res.json();
+    } catch (e) {
+      btn.disabled = false;
+      status.innerHTML = `<div class="warn-banner">수집 요청 실패: ${e}</div>`;
+      return;
+    }
+    if (!res.ok) {
+      btn.disabled = false;
+      status.innerHTML = `<div class="warn-banner">수집 시작 실패: ${data.detail || "알 수 없는 오류"}</div>`;
+      return;
+    }
+    pollCollect(company, period);
+  };
+
+  async function pollCollect(company, period) {
+    const status = document.getElementById("dc-status");
+    const btn = document.getElementById("dc-btn");
+    const key = `${company}/${period}`;
+    const interval = setInterval(async () => {
+      const res = await fetch(`${API}/api/library/collect/status`).then(r => r.json());
+      const item = (res.items || []).find(i => i.key === key);
+      if (!item) return;
+      if (item.status === "done") {
+        clearInterval(interval);
+        btn.disabled = false;
+        const rep = item.report_collected ? "분기보고서 PDF ✓" : "분기보고서 PDF –";
+        const rev = item.review_collected ? "검토보고서 PDF ✓" : "검토보고서 PDF –";
+        const idx = (item.indexed || []).length ? ` · 인덱싱: ${item.indexed.join(", ")}` : " · 인덱싱 대상 없음";
+        status.innerHTML = `<div class="info-banner">✓ ${company}·${period} 수집 완료 — ${rep} / ${rev}${idx}</div>`;
+        loadLibrary();   // 매트릭스 갱신
+      } else if (item.status === "error") {
+        clearInterval(interval);
+        btn.disabled = false;
+        status.innerHTML = `<div class="warn-banner">수집 실패: ${item.error}</div>`;
+      } else {
+        const stage = item.stage === "indexing" || item.status === "indexing" ? "인덱싱 중" : "수집 중";
+        status.innerHTML = `<div class="info-banner">${company}·${period} ${stage}...</div>`;
+      }
+    }, 1500);
+  }
+
+  // ----- Compare -----
+  function renderTargetsBar() {
+    const bar = document.getElementById("compare-targets-bar");
+    if (SELECTED.size === 0) {
+      bar.innerHTML = `<span style="color:#9ca3af; font-size:13px;">먼저 라이브러리 탭에서 비교 대상을 선택하세요.</span>`;
+      return;
+    }
+    bar.innerHTML = [...SELECTED].map(k => {
+      const { company, period, docType } = parseSelKey(k);
+      return `<span class="chip">${DOC_ICON[docType]} ${company}·${period}·${DOC_LABEL[docType]}</span>`;
+    }).join("") + `<span style="margin-left:auto; font-size:12px; color:#6b7280;">${SELECTED.size}개 비교</span>`;
+  }
+
+  window.doCompare = async function() {
+    if (SELECTED.size === 0) return toast("비교 대상을 먼저 선택하세요.");
+    const q = document.getElementById("query").value.trim();
+    const mode = document.getElementById("mode").value;
+    if (!q) return toast("검색어를 입력하세요.");
+
+    const targets = [...SELECTED].map(k => {
+      const { company, period, docType } = parseSelKey(k);
+      return { company, period, doc_type: docType };
+    });
+
+    const res = await fetch(`${API}/api/compare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targets, query: q, mode }),
+    });
+    const data = await res.json();
+
+    let info = `<div class="info-banner"><strong>"${q}"</strong> 매칭 결과 (${data.matches.length}개): `;
+    info += data.matches.map(m => `${DOC_ICON[m.doc_type || 'report']} ${m.company}·${m.period} #${m.note_no}`).join(" · ");
+    info += `</div>`;
+
+    if (data.unit_warning) {
+      info += `<div class="warn-banner">⚠️ 단위 차이: ${data.units_seen.join(", ")} — 비교 시 단위를 직접 확인하세요.</div>`;
+    }
+    if (data.missing.length > 0) {
+      info += `<div class="warn-banner">⚠️ 매칭 실패: ${data.missing.map(m => `${m.company}·${m.period}`).join(", ")}</div>`;
+    }
+    document.getElementById("results-info").innerHTML = info;
+
+    // 레이아웃 자동 조정
+    const grid = document.getElementById("compare-grid");
+    grid.className = "compare-grid cols-" + (data.matches.length <= 1 ? 1 : data.matches.length <= 4 ? 2 : 3);
+
+    grid.innerHTML = data.matches.map((m, i) => {
+      const lowConf = m.score < 0.85;
+      const dt = m.doc_type || "report";
+      return `<div class="compare-panel">
+        <div class="panel-head">
+          <div class="top">
+            <span>${DOC_ICON[dt]} ${m.company} · ${m.period} · ${DOC_FULL[dt]}</span>
+            <span>p.${m.page_start}-${m.page_end} · score ${m.score}${lowConf ? ' <span class="badge-low">낮은 신뢰도</span>' : ''}</span>
+          </div>
+          <div class="title">주석 ${m.note_no} — ${m.title}${m.detected_unit ? ' <span style="color:#6b7280;font-weight:normal;">(단위: ' + m.detected_unit + ')</span>' : ''}</div>
+        </div>
+        <div class="pdf-area" id="pdf-${i}"></div>
+      </div>`;
+    }).join("");
+
+    for (let i = 0; i < data.matches.length; i++) {
+      const m = data.matches[i];
+      renderPdfRange(m.company, m.period, m.page_start, m.page_end, `pdf-${i}`, m.doc_type || "report");
+    }
+  };
+
+  async function renderPdfRange(company, period, start, end, containerId, docType) {
+    const dt = docType || "report";
+    const url = `${API}/api/pdf?company=${encodeURIComponent(company)}&period=${encodeURIComponent(period)}&doc_type=${encodeURIComponent(dt)}`;
+    const pdf = await window.pdfjsLib.getDocument(url).promise;
+    const container = document.getElementById(containerId);
+    container.innerHTML = "";
+    for (let p = start; p <= end; p++) {
+      const page = await pdf.getPage(p);
+      const viewport = page.getViewport({ scale: 1.1 });
+      const canvas = document.createElement("canvas");
+      canvas.className = "pdf-canvas";
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      // 요청3: 페이지 더블클릭 → 원본 PDF 를 팝업으로 열고 해당 페이지로 이동(#page).
+      canvas.style.cursor = "zoom-in";
+      canvas.title = `더블클릭: 원본 PDF ${p}쪽을 새 창에서 엽니다`;
+      const pageNo = p;
+      canvas.addEventListener("dblclick", () => {
+        window.open(`${url}#page=${pageNo}`, "_blank",
+          "noopener,noreferrer,width=1000,height=1200,scrollbars=yes,resizable=yes");
+      });
+      container.appendChild(canvas);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    }
+  }
+
+  // ----- Insight (A 커버리지 / B 차집합) -----
+  // 분석 기간: 직전 실행 기간(localStorage)을 디폴트로, 없으면 2026Q1.
+  let INSIGHT_PERIOD = localStorage.getItem("insightPeriod") || "2026Q1";
+  const DEFAULT_TOPICS = ["공정가치","대손충당금","금융상품 위험","영업권","리스","확정급여","법인세","우발부채 및 약정","특수관계자 거래","자본"];
+  let TOPICS = [...DEFAULT_TOPICS];
+  const LEVEL_LABEL = { dedicated: "전용", related: "통합·관련", none: "미발견" };
+
+  function insightTargets() {
+    return COMPANIES.map(c => ({ company: c, period: INSIGHT_PERIOD }));
+  }
+
+  // 분석 기간 드롭다운 채우기 — 라이브러리 보유 기간 + 현재 선택 기간.
+  function populateInsightPeriods() {
+    const sel = document.getElementById("insight-period");
+    if (!sel) return;
+    const periods = LIBRARY.available_periods || [];
+    const opts = periods.includes(INSIGHT_PERIOD) ? periods : [INSIGHT_PERIOD, ...periods];
+    sel.innerHTML = opts.map(p => `<option value="${p}"${p === INSIGHT_PERIOD ? ' selected' : ''}>${p}</option>`).join("");
+  }
+
+  function updateInsightSubtitle() {
+    const el = document.getElementById("insight-subtitle");
+    if (el) el.textContent = `4사 ${INSIGHT_PERIOD} 기준. 주석 "구조"만 비교하며 숫자·단위는 재구성/환산하지 않습니다.`;
+  }
+
+  // 드롭다운 변경 → 기간 갱신·저장 후 재로딩.
+  window.onInsightPeriodChange = function() {
+    INSIGHT_PERIOD = document.getElementById("insight-period").value;
+    localStorage.setItem("insightPeriod", INSIGHT_PERIOD);
+    _insightLoadedPeriod = INSIGHT_PERIOD;
+    reloadInsight();
+  };
+
+  async function reloadInsight() {
+    updateInsightSubtitle();
+    await Promise.all([loadCoverage(), loadStructureDiff()]);
+  }
+
+  let _insightLoadedPeriod = null;
+  async function loadInsight() {
+    // 요청1: 라이브러리에서 선택한 대상이 있으면 그 기간을 채택(첫 항목 기준).
+    //        선택이 없으면 직전 실행 기간(localStorage)을 그대로 유지.
+    if (SELECTED.size > 0) {
+      const first = parseSelKey([...SELECTED][0]);
+      if (first.period) {
+        INSIGHT_PERIOD = first.period;
+        localStorage.setItem("insightPeriod", INSIGHT_PERIOD);
+      }
+    }
+    populateInsightPeriods();
+    if (_insightLoadedPeriod === INSIGHT_PERIOD) return;  // 동일 기간 재진입 시 중복 호출 방지
+    _insightLoadedPeriod = INSIGHT_PERIOD;
+    await reloadInsight();
+  }
+
+  window.addTopic = function() {
+    const inp = document.getElementById("topic-input");
+    const v = inp.value.trim();
+    if (!v) return;
+    if (!TOPICS.includes(v)) TOPICS.push(v);
+    inp.value = "";
+    loadCoverage();
+  };
+  window.resetTopics = function() { TOPICS = [...DEFAULT_TOPICS]; loadCoverage(); };
+  window.removeTopic = function(t) { TOPICS = TOPICS.filter(x => x !== t); loadCoverage(); };
+
+  window.loadCoverage = async function() {
+    const table = document.getElementById("cov-table");
+    table.innerHTML = `<tr><td class="empty-note">불러오는 중...</td></tr>`;
+    const res = await fetch(`${API}/api/coverage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targets: insightTargets(), topics: TOPICS }),
+    });
+    const d = await res.json();
+
+    const warn = document.getElementById("insight-warn");
+    warn.innerHTML = d.unit_warning
+      ? `<div class="warn-banner">⚠️ 단위 차이: ${d.units_seen.join(", ")} — 비교 시 단위를 직접 확인하세요. (환산하지 않음)</div>` : "";
+
+    let html = `<tr><th class="topic-col">주제 \\ 회사</th>` +
+      COMPANIES.map(c => `<th>${c}</th>`).join("") + `</tr>`;
+    for (const topic of d.topics) {
+      const row = d.matrix[topic];
+      html += `<tr><th class="topic-col">${topic} <button onclick="removeTopic('${topic.replace(/'/g,"\\'")}')" style="background:none;border:none;color:#9ca3af;cursor:pointer;float:right;">×</button></th>`;
+      for (const c of COMPANIES) {
+        const cell = row[`${c}/${INSIGHT_PERIOD}`];
+        const lv = cell.coverage_level;
+        if (lv === "none") {
+          html += `<td><div class="cov-cell none">미발견${cell.best_score!=null?`<span class="cov-note">~${cell.best_score}</span>`:""}</div></td>`;
+        } else {
+          const safeTopic = topic.replace(/'/g,"\\'");
+          const dbl = `ondblclick="goCompareTopicAll('${safeTopic}')" title="더블클릭: 4대 지주 전체를 '${safeTopic}' 주제로 비교"`;
+          html += `<td><div class="cov-cell ${lv}" ${dbl} style="cursor:zoom-in">${LEVEL_LABEL[lv]}<span class="cov-note">#${cell.note_no} (${cell.score})</span></div></td>`;
+        }
+      }
+      html += `</tr>`;
+    }
+    table.innerHTML = html;
+  };
+
+  // 셀 더블클릭 → 비교 탭에서 4대 지주 전체를 해당 주제로 검색(요청2).
+  // 분석 기간에 분기보고서(report)가 인덱싱된 회사를 모두 대상으로 잡는다.
+  window.goCompareTopicAll = function(topic) {
+    SELECTED = new Set();
+    for (const c of COMPANIES) {
+      const entry = LIBRARY.entries.find(e => e.company === c && e.period === INSIGHT_PERIOD);
+      if (docIndexed(entry, "report")) SELECTED.add(selKey(c, INSIGHT_PERIOD, "report"));
+    }
+    if (SELECTED.size === 0) return toast(`${INSIGHT_PERIOD}에 인덱싱된 분기보고서가 없습니다.`);
+    showTab("compare");
+    renderTargetsBar();
+    document.getElementById("query").value = topic;
+    document.getElementById("mode").value = "topic";
+    doCompare();
+  };
+
+  window.loadStructureDiff = async function() {
+    const cols = document.getElementById("diff-cols");
+    cols.innerHTML = `<div class="empty-note">불러오는 중...</div>`;
+    const peers = ["KB","하나","우리"].map(c => ({ company: c, period: INSIGHT_PERIOD }));
+    const res = await fetch(`${API}/api/structure-diff`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base: { company: "신한", period: INSIGHT_PERIOD }, peers }),
+    });
+    if (!res.ok) {
+      // base(신한) 또는 peer 분기보고서가 이 기간에 인덱싱되지 않은 경우 — 단정 대신 안내.
+      cols.innerHTML = `<div class="empty-note">${INSIGHT_PERIOD}: 신한 또는 동종 분기보고서가 모두 인덱싱되어 있지 않아 차집합을 계산할 수 없습니다.</div>`;
+      return;
+    }
+    const d = await res.json();
+    document.getElementById("diff-thr").textContent = d.threshold;
+
+    const baseOnly = d.base_only.length
+      ? d.base_only.map(n =>
+          `<li><span class="dtitle">${n.title}</span><div class="dmeta">신한 #${n.note_no} · p.${n.page_start}-${n.page_end}</div></li>`).join("")
+      : `<div class="empty-note">동종 대비 신한 단독 주석 없음</div>`;
+
+    const peerGap = d.peer_disclosed_base_missing.length
+      ? d.peer_disclosed_base_missing.map(g => {
+          const bbs = g.examples[0].base_best_score;
+          // 임계값에 근접하면 신한이 다른 제목으로 공시 중일 가능성 — 단정 대신 검토 유도
+          const borderline = bbs >= (d.threshold - 0.07);
+          const mark = borderline
+            ? `<span class="pc-badge" style="background:#b45309" title="신한 유사 주석이 임계값 근처 — 표기만 다를 수 있어 직접 확인 필요">표기차이 가능</span>`
+            : "";
+          return `<li><span class="dtitle">${g.title}</span><span class="pc-badge">${g.peer_count}사</span>${mark}
+             <div class="dmeta">공시: ${g.disclosed_by.join(", ")} · 신한 최고유사도 ${bbs} (임계값 ${d.threshold})</div></li>`;
+        }).join("")
+      : `<div class="empty-note">신한이 미보유한 동종 주석 없음</div>`;
+
+    cols.innerHTML = `
+      <div class="diff-card">
+        <div class="head">신한만 보유 (${d.base_only.length})</div>
+        <ul class="diff-list">${baseOnly}</ul>
+      </div>
+      <div class="diff-card">
+        <div class="head">동종 보유 · 신한 직접 대응 미발견 (${d.peer_disclosed_base_missing.length}) · 유사도&lt;${d.threshold} · 공시社 많은 순</div>
+        <ul class="diff-list">${peerGap}</ul>
+      </div>`;
+  };
+
+  // ----- Wordmap (영문 변환 탭) -----
+  const WM_LABELS = {
+    COMPANY_NAME: "회사 영문명", REPORT_DATE: "회계 기말일", REPORT_YEAR: "회계 연도",
+    DETECTED_UNIT: "보고 단위", TOTAL_ASSETS: "자산총계", TOTAL_LIABILITIES: "부채총계",
+    TOTAL_EQUITY: "자본총계", NET_INCOME: "당기순이익",
+    AUDITOR_NAME: "대표 감사인", AUDITING_FIRM: "감사 법인", SIGN_DATE: "서명일",
+  };
+  const WM_ORDER = ["COMPANY_NAME","REPORT_DATE","REPORT_YEAR","DETECTED_UNIT",
+                    "TOTAL_ASSETS","TOTAL_LIABILITIES","TOTAL_EQUITY","NET_INCOME",
+                    "AUDITOR_NAME","AUDITING_FIRM","SIGN_DATE"];
+
+  function loadWordmap() {
+    // 기간 드롭다운 — 신한이 report 보유한 기간만(report 옵션 기본)
+    const sel = document.getElementById("wm-period");
+    const dtSel = document.getElementById("wm-doctype");
+    const company = "신한";
+    function populate() {
+      const dt = dtSel.value;
+      const periods = (LIBRARY.entries || [])
+        .filter(e => e.company === company && (dt === "report" ? e.indexed : e.review_indexed))
+        .map(e => e.period);
+      // 최신 우선 정렬(문자열 역순 — YYYY 기준 충분)
+      periods.sort((a, b) => b.localeCompare(a));
+      sel.innerHTML = periods.length
+        ? periods.map(p => `<option value="${p}">${p}</option>`).join("")
+        : `<option value="">(없음)</option>`;
+    }
+    populate();
+    dtSel.onchange = populate;
+  }
+
+  function _wmBadge(v) {
+    if (v === "ok")                return `<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">🟢 OK</span>`;
+    if (v === "heuristic_fallback")return `<span style="background:#fef9c3;color:#854d0e;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">🟡 휴리스틱</span>`;
+    return                                `<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:700;">🔴 검토 필요</span>`;
+  }
+
+  function _renderWmTable(data) {
+    const table = document.getElementById("wm-table");
+    let html = `<tr>
+      <th class="topic-col" style="width:170px;">변수</th>
+      <th>값(영문)</th>
+      <th style="width:130px;">소스</th>
+      <th style="width:130px;">검증</th>
+    </tr>`;
+    for (const k of WM_ORDER) {
+      const v = (data.values && data.values[k]) || "";
+      const src = (data.sources && data.sources[k]) || "-";
+      const ver = (data.verification && data.verification[k]) || "review_required";
+      const labelKo = WM_LABELS[k];
+      html += `<tr>
+        <th class="topic-col" style="text-align:left;padding-left:14px;">
+          <div style="font-weight:700;">${labelKo}</div>
+          <div style="font-size:10px;color:#9ca3af;font-weight:400;">{{${k}}}</div>
+        </th>
+        <td style="padding:8px 12px; text-align:left; font-family:'Consolas',monospace; font-size:12px;">${v ? v.replace(/</g,"&lt;") : '<span style="color:#9ca3af;">(빈값)</span>'}</td>
+        <td style="padding:8px;font-size:11px;color:#374151;">${src}</td>
+        <td style="padding:8px;">${_wmBadge(ver)}</td>
+      </tr>`;
+    }
+    table.innerHTML = html;
+  }
+
+  window.doWordmapPreview = async function() {
+    const company = document.getElementById("wm-company").value;
+    const period = document.getElementById("wm-period").value;
+    const doc_type = document.getElementById("wm-doctype").value;
+    const status = document.getElementById("wm-status");
+    if (!period) return toast("기간을 선택하세요.");
+    status.innerHTML = `<div class="info-banner">미리보기 추출 중...</div>`;
+    try {
+      const res = await fetch(`${API}/api/wordmap/preview`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company, period, doc_type }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        status.innerHTML = `<div class="warn-banner">미리보기 실패: ${data.detail || "오류"}</div>`;
+        return;
+      }
+      _renderWmTable(data);
+      const v = data.verification || {};
+      const ok = Object.values(v).filter(s => s === "ok").length;
+      const review = Object.values(v).filter(s => s === "review_required").length;
+      status.innerHTML = `<div class="info-banner">미리보기 완료 — 🟢 ${ok} / 11 · 🔴 검토 필요 ${review} / 11</div>`;
+    } catch (e) {
+      status.innerHTML = `<div class="warn-banner">요청 실패: ${e}</div>`;
+    }
+  };
+
+  window.doWordmapBuild = async function() {
+    const company = document.getElementById("wm-company").value;
+    const period = document.getElementById("wm-period").value;
+    const doc_type = document.getElementById("wm-doctype").value;
+    const status = document.getElementById("wm-status");
+    const btn = document.getElementById("wm-build-btn");
+    if (!period) return toast("기간을 선택하세요.");
+    btn.disabled = true;
+    status.innerHTML = `<div class="info-banner">영문 Word 빌드 시작...</div>`;
+    let res, data;
+    try {
+      res = await fetch(`${API}/api/wordmap/build`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ company, period, doc_type }),
+      });
+      data = await res.json();
+    } catch (e) {
+      btn.disabled = false;
+      status.innerHTML = `<div class="warn-banner">요청 실패: ${e}</div>`;
+      return;
+    }
+    if (!res.ok) {
+      btn.disabled = false;
+      status.innerHTML = `<div class="warn-banner">빌드 시작 실패: ${data.detail || "오류"}</div>`;
+      return;
+    }
+    pollWordmapBuild(data.job_id);
+  };
+
+  async function pollWordmapBuild(job_id) {
+    const status = document.getElementById("wm-status");
+    const btn = document.getElementById("wm-build-btn");
+    const interval = setInterval(async () => {
+      try {
+        const r = await fetch(`${API}/api/wordmap/status?job_id=${encodeURIComponent(job_id)}`);
+        const d = await r.json();
+        if (d.status === "done") {
+          clearInterval(interval);
+          btn.disabled = false;
+          if (d.mappings) _renderWmTable(d.mappings);
+          const s = d.verification_summary || {};
+          status.innerHTML = `<div class="info-banner">✓ 빌드 완료 — 🟢 ${s.ok||0} · 🟡 ${s.heuristic_fallback||0} · 🔴 ${s.review_required||0} · 치환 ${d.placeholders_replaced} 개<br>
+            <a href="${API}/api/wordmap/download/${encodeURIComponent(job_id)}" download style="color:#0046ff;font-weight:700;text-decoration:underline;">⬇ 영문 Word 다운로드</a></div>`;
+        } else if (d.status === "error") {
+          clearInterval(interval);
+          btn.disabled = false;
+          status.innerHTML = `<div class="warn-banner">빌드 실패: ${d.error}</div>`;
+        } else {
+          status.innerHTML = `<div class="info-banner">빌드 진행 중 (${d.stage || d.status})...</div>`;
+        }
+      } catch (e) { /* 잠시 후 재시도 */ }
+    }, 1200);
+  }
+
+  // ----- Toast -----
+  function toast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg;
+    t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 2000);
+  }
+  window.toast = toast;
+  window.showTab = showTab;
+
+  // ===== 재무제표 비교 탭 (fs_compare 결정론 엔진 연동) =====
+  const FS_COMPANIES = ["신한", "KB", "하나", "우리"];
+  let fsSel = { company: "신한", period: "2026Q1", fsdiv: "연결", account: "ifrs-full_Assets", view: "delta" };
+
+  function fsGrp(s){ // 원문 정수 문자열 → 콤마(표시용, 환산 아님)
+    if(s===null||s===undefined||s==="") return "—";
+    const neg=String(s).trim().startsWith("-"); const d=String(s).replace(/[^0-9]/g,"");
+    if(!d) return "—";
+    return (neg?"-":"")+d.replace(/\B(?=(\d{3})+(?!\d))/g,",");
+  }
+  function fsAux(s){ // 보조 표기(별도 라인). 원값 불변.
+    const v=Number(s); if(!isFinite(v)||v===0) return "";
+    const a=Math.abs(v), sg=v<0?"-":"";
+    if(a>=1e12) return `≈ ${sg}${(a/1e12).toFixed(2)}조원`;
+    if(a>=1e8)  return `≈ ${sg}${(a/1e8).toFixed(0)}억원`;
+    return "";
+  }
+  function fsCell(s){ const a=fsAux(s); return `<span style="font-weight:700;">${fsGrp(s)}</span>${a?`<div style="color:#9ca3af;font-size:11px;font-weight:600;">${a}</div>`:""}`; }
+  function fsProvBtn(prov){
+    if(!prov) return "";
+    const j=encodeURIComponent(JSON.stringify(prov));
+    return ` <span style="display:inline-block;width:15px;height:15px;line-height:15px;text-align:center;border-radius:50%;background:#eef2ff;color:#0046ff;font-size:10px;cursor:pointer;font-weight:700;" onclick="fsShowProv(event,'${j}')">ⓘ</span>`;
+  }
+  window.fsShowProv = function(ev, j){
+    const p=JSON.parse(decodeURIComponent(j));
+    let s=`<div style="font-weight:700;color:#93c5fd;margin-bottom:4px;">🔍 계산 근거 (결정론)</div>계산식: <code style="background:#1f2937;color:#fde68a;padding:1px 5px;border-radius:4px;">${p.formula}</code><br>`;
+    if(p.inputs){ s+="입력(원문):<br>"; p.inputs.forEach(i=>{ s+=`&nbsp;• ${i.label}: <code style="background:#1f2937;color:#fde68a;padding:1px 4px;border-radius:4px;">${fsGrp(i.raw)}</code> <span style="color:#9ca3af;">(${i.account_id} · ${i.period} · ${i.fs_div})</span><br>`; }); }
+    s+=`결과: <code style="background:#1f2937;color:#fde68a;padding:1px 5px;border-radius:4px;">${p.result}</code><br><span style="color:#9ca3af;">engine: deterministic · AI 미경유 · 단위 환산 없음</span>`;
+    const pop=document.getElementById("fs-pop"); document.getElementById("fs-pop-body").innerHTML=s;
+    pop.style.display="block";
+    let x=ev.clientX+12, y=ev.clientY+12; const r=pop.getBoundingClientRect();
+    if(x+r.width>innerWidth) x=innerWidth-r.width-12;
+    if(y+r.height>innerHeight) y=innerHeight-r.height-12;
+    pop.style.left=x+"px"; pop.style.top=y+"px"; ev.stopPropagation();
+  };
+  document.addEventListener("click", e=>{ if(!e.target.closest("#fs-pop") && e.target.textContent!=="ⓘ") document.getElementById("fs-pop").style.display="none"; });
+
+  function loadFsTab(){ showFsView(fsSel.view); }
+  window.loadFsTab = loadFsTab;
+  function showFsView(v){
+    fsSel.view=v;
+    document.querySelectorAll(".fs-view").forEach(b=>b.classList.toggle("on", b.dataset.view===v));
+    renderFsControls();
+    renderFsView();
+  }
+  window.showFsView = showFsView;
+
+  function fsOpt(id,label,val,opts,onch){
+    return `<div class="field"><label>${label}</label><select id="${id}" onchange="${onch}">`+
+      opts.map(o=>`<option value="${o}" ${o===val?'selected':''}>${o}</option>`).join("")+`</select></div>`;
+  }
+  function renderFsControls(){
+    const periods=["2026Q1","2025Q3"];
+    const comp=fsOpt("fs-company","회사",fsSel.company,FS_COMPANIES,"fsSel.company=this.value;renderFsView()");
+    const per=fsOpt("fs-period","기간",fsSel.period,periods,"fsSel.period=this.value;renderFsView()");
+    const fsd=fsOpt("fs-fsdiv","연결/별도",fsSel.fsdiv,["연결","별도"],"fsSel.fsdiv=this.value;renderFsView()");
+    const accs=[["ifrs-full_Assets","자산총계"],["ifrs-full_Liabilities","부채총계"],["ifrs-full_Equity","자본총계"],["ifrs-full_ProfitLossFromOperatingActivities","영업이익"],["ifrs-full_ProfitLoss","분기순이익"]];
+    const acc=`<div class="field"><label>계정</label><select id="fs-account" onchange="fsSel.account=this.value;renderFsView()">`+
+      accs.map(a=>`<option value="${a[0]}" ${a[0]===fsSel.account?'selected':''}>${a[1]}</option>`).join("")+`</select></div>`;
+    const v=fsSel.view;
+    let html="";
+    if(v==="delta") html=comp+fsd;
+    else if(v==="cons") html=comp+per;
+    else if(v==="bench") html=per+fsd+acc;
+    else if(v==="ratio") html=comp+per+fsd;
+    document.getElementById("fs-controls").innerHTML=html;
+  }
+
+  async function fsGet(path, params){
+    const qs=new URLSearchParams(params).toString();
+    const r=await fetch(`/api/fs/${path}?${qs}`); return r.json();
+  }
+  function renderFsView(){
+    const v=fsSel.view;
+    if(v==="delta") return fsViewDelta();
+    if(v==="cons") return fsViewCons();
+    if(v==="bench") return fsViewBench();
+    if(v==="ratio") return fsViewRatio();
+  }
+  async function fsViewDelta(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("delta",{company:fsSel.company,period:fsSel.period,fs_div:fsSel.fsdiv});
+    let h=`<div class="warn-banner">증감 비교 컬럼은 재무제표 종류별 자동 선택: 재무상태표=전기말, 손익=전기동기. 전전기(bfefrmtrm) 단일셀 추론은 하지 않습니다.</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">계정 (${fsSel.company} · ${fsSel.period} · ${fsSel.fsdiv})</th><th>당기(원문)</th><th>증감(파생)</th><th>증감률</th></tr>`;
+    (d.rows||[]).forEach(r=>{
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.account_nm}</strong><br><span style="color:#9ca3af;font-size:11px;">${r.account_id} · ${r.sj_div}</span></td>`;
+      h+=`<td style="text-align:right;padding:8px 10px;">${fsCell(r.thstrm)}</td>`;
+      if(r.delta===null){ h+=`<td style="text-align:right;padding:8px 10px;color:#9ca3af;">N/A<br><span style="font-size:11px;">${r.compare_col_ko} 값 없음</span></td><td>—</td>`; }
+      else{ const pos=Number(r.delta)>=0; h+=`<td style="text-align:right;padding:8px 10px;color:${pos?'#047857':'#b91c1c'};">${pos?'▲':'▼'} ${fsGrp(r.delta)}${fsProvBtn(r.provenance)}<br><span style="color:#9ca3af;font-size:11px;">vs ${r.compare_col_ko}</span></td><td style="text-align:right;padding:8px 10px;color:${pos?'#047857':'#b91c1c'};font-weight:600;">${r.pct}${typeof r.pct==='number'?'%':''}</td>`; }
+      h+=`</tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+  async function fsViewCons(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("consolidated-vs-separate",{company:fsSel.company,period:fsSel.period});
+    let h=`<div class="warn-banner">차이 = <strong>연결(CFS) − 별도(OFS)</strong> = 자회사효과(추정·연결조정 미반영). 한쪽만 존재 시 차감하지 않고 "대응 없음" 표시.</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">계정 (${fsSel.company} · ${fsSel.period})</th><th>연결(CFS)</th><th>별도(OFS)</th><th>차이(자회사효과)</th></tr>`;
+    (d.rows||[]).forEach(r=>{
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.account_nm||''}</strong><br><span style="color:#9ca3af;font-size:11px;">${r.account_id}</span></td>`;
+      h+=`<td style="text-align:right;padding:8px 10px;">${r.cfs?fsCell(r.cfs):'<span class="pc-badge">대응 없음</span>'}</td>`;
+      h+=`<td style="text-align:right;padding:8px 10px;">${r.ofs?fsCell(r.ofs):'<span class="pc-badge">대응 없음</span>'}</td>`;
+      if(r.diff!==null&&r.diff!==undefined) h+=`<td style="text-align:right;padding:8px 10px;">${fsCell(r.diff)}${fsProvBtn(r.provenance)}</td>`;
+      else h+=`<td style="text-align:center;padding:8px 10px;"><span class="pc-badge">계산 불가</span></td>`;
+      h+=`</tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+  async function fsViewBench(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("benchmark",{period:fsSel.period,account_id:fsSel.account,fs_div:fsSel.fsdiv});
+    let h="";
+    if(d.unit_warning) h+=`<div class="warn-banner">⚠️ 단위 불일치(${(d.units_seen||[]).join(", ")}) — 자동 환산하지 않습니다.</div>`;
+    else h+=`<div class="info-banner">단위: ${(d.units_seen||['—']).join(", ")} · 원문 표기 그대로.</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">${d.account_nm} · ${fsSel.period} · ${fsSel.fsdiv}</th><th>당기(원문)</th><th>순위</th></tr>`;
+    (d.rows||[]).sort((a,b)=>a.rank-b.rank).forEach(r=>{
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.company}</strong></td><td style="text-align:right;padding:8px 10px;">${fsCell(r.thstrm)}</td><td style="text-align:center;padding:8px 10px;"><span style="display:inline-block;width:20px;height:20px;line-height:20px;border-radius:50%;background:#0046ff;color:#fff;font-size:11px;font-weight:700;">${r.rank}</span></td></tr>`;
+    });
+    h+=`</table></div>`;
+    if((d.missing||[]).length) h+=`<p style="color:#6b7280;font-size:12px;margin-top:8px;"><span class="pc-badge">대응 없음</span> ${d.missing.join(", ")} — 해당 셀 미수집/미존재(순위 제외). DART 수집 후 표시됩니다.</p>`;
+    out.innerHTML=h;
+  }
+  async function fsViewRatio(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("ratio",{company:fsSel.company,period:fsSel.period,fs_div:fsSel.fsdiv});
+    let h=`<div class="warn-banner">비율은 분자·분모가 모두 원문에 존재할 때만 결정론 계산하고 계산식을 첨부합니다.</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">지표 (${fsSel.company} · ${fsSel.period} · ${fsSel.fsdiv})</th><th>값(파생)</th><th>비고</th></tr>`;
+    (d.rows||[]).forEach(r=>{
+      if(r.value===null) h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.label}</strong></td><td style="text-align:center;"><span class="pc-badge">계산 불가</span></td><td style="color:#9ca3af;font-size:12px;">${r.reason||''}</td></tr>`;
+      else h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.label}</strong></td><td style="text-align:right;padding:8px 10px;font-weight:700;">${r.value}${typeof r.value==='number'?'%':''}${fsProvBtn(r.provenance)}</td><td style="color:#6b7280;font-size:12px;">${r.provenance?r.provenance.formula:''}</td></tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+
+  // 초기 로드
+  loadLibrary();
+</script>
+</body>
+</html>
