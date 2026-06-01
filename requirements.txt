@@ -17,3 +17,8 @@ lxml>=4.9.0
 
 # 테스트
 pytest>=8.0
+# E2E(개발 PC 전용) — 선행: python -m playwright install chromium
+playwright>=1.40
+
+# 배포 빌드(개발 PC 전용) — onedir 풀번들(torch+ST 동봉)
+# pyinstaller>=6.0
