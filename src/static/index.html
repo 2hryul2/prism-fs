@@ -380,8 +380,12 @@
     <p style="color:#6b7280; font-size:12px; margin-top:2px;">base=신한, peers=KB·하나·우리. 의미(임베딩) 매칭 임계값 <span id="diff-thr">0.62</span> 기준. 제목이 달라도 의미가 같으면 대응으로 간주합니다.</p>
     <div class="diff-cols" id="diff-cols"></div>
 
+    <h3 style="font-size:15px; font-weight:700; margin-top:28px;">C. 주제별 4사 정렬 (표준 주제 매핑)</h3>
+    <p style="color:#6b7280; font-size:12px; margin-top:2px;">회사마다 번호·제목이 다른 주석을 <strong>canonical 주제</strong>로 분류해 4사를 나란히 정렬(임베딩, AI 무경유). 칩 클릭 시 원본 PDF. <button class="btn btn-secondary" style="padding:4px 12px;font-size:12px;" onclick="loadTopicMap()">주제 매핑 실행</button></p>
+    <div class="matrix-wrap"><table class="cov-table" id="topicmap-table"><tr><td class="empty-note">"주제 매핑 실행"을 눌러 4사를 표준 주제로 정렬하세요.</td></tr></table></div>
+
     <div class="footer-note">
-      ℹ️ 커버리지·차집합 분류는 임베딩 코사인 + 규칙으로만 산출되며 AI가 주석/숫자를 생성하지 않습니다. (연결/별도 동일 축끼리 비교)
+      ℹ️ 커버리지·차집합·주제 매핑 분류는 임베딩 코사인 + 규칙으로만 산출되며 AI가 주석/숫자를 생성하지 않습니다. (연결/별도 동일 축끼리 비교)
     </div>
   </div>
 
@@ -1003,6 +1007,36 @@
         <div class="head">동종 보유 · 신한 직접 대응 미발견 (${d.peer_disclosed_base_missing.length}) · 유사도&lt;${d.threshold} · 공시社 많은 순</div>
         <ul class="diff-list">${peerGap}</ul>
       </div>`;
+  };
+
+  // C. 주제별 4사 정렬 (§5.2 표준 주제 매핑)
+  window.loadTopicMap = async function() {
+    const table = document.getElementById("topicmap-table");
+    table.innerHTML = `<tr><td class="empty-note">주제 매핑 중...(임베딩)</td></tr>`;
+    const qs = new URLSearchParams({ period: INSIGHT_PERIOD, fs_div: INSIGHT_FSDIV,
+      companies: COMPANIES.join(","), note_kind: (document.getElementById("cov-kind")||{}).value || "전체" });
+    let d;
+    try { d = await fetch(`${API}/api/notes/topic-map?${qs}`).then(r => r.json()); }
+    catch (e) { table.innerHTML = `<tr><td class="empty-note">실패: ${e}</td></tr>`; return; }
+    let html = `<tr><th class="topic-col">주제 \\ 회사</th>` + COMPANIES.map(c => `<th>${c}</th>`).join("") + `</tr>`;
+    for (const t of d.topics) {
+      html += `<tr><th class="topic-col">${t}</th>`;
+      for (const c of COMPANIES) {
+        const arr = (d.matrix[t] && d.matrix[t][c]) || [];
+        if (!arr.length) { html += `<td><div class="cov-cell none">—</div></td>`; continue; }
+        const chips = arr.slice(0, 3).map(m => {
+          const url = `${API}/api/pdf?company=${encodeURIComponent(c)}&period=${encodeURIComponent(INSIGHT_PERIOD)}&doc_type=report#page=${m.page_start}`;
+          return `<span class="chip" style="cursor:pointer;background:#e0e7ff;color:#3730a3;" title="${(m.title||'').replace(/"/g,'')} · ${(m.score*100).toFixed(0)}%"
+            onclick="window.open('${url}','_blank','width=1000,height=1200,scrollbars=yes,resizable=yes')">#${m.note_no} ${(m.title||'').slice(0,12)} ${(m.score*100).toFixed(0)}%</span>`;
+        }).join(" ");
+        html += `<td style="text-align:left;padding:6px 8px;">${chips}</td>`;
+      }
+      html += `</tr>`;
+    }
+    // 미분류 행
+    html += `<tr><th class="topic-col" style="color:#9ca3af;">미분류(임계&lt;${d.topic_min_score})</th>` +
+      COMPANIES.map(c => `<td style="color:#9ca3af;">${d.unclassified[c] != null ? d.unclassified[c] + '건' : '—'}</td>`).join("") + `</tr>`;
+    table.innerHTML = html;
   };
 
   // ----- Wordmap (영문 변환 탭) -----
