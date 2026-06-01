@@ -167,6 +167,7 @@
     </div>
 
     <div style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:12px;">
+      <button class="preset-btn" onclick="presetSinhanVsPeers()" style="background:#0046ff;color:#fff;border-color:#0046ff;">⭐ 신한 중심 4사 비교</button>
       <button class="preset-btn" onclick="presetLatestQuarter()">전 회사·최신 분기</button>
       <button class="preset-btn" onclick="presetSameQuarterAll()">동일 분기·모든 회사</button>
       <button class="preset-btn" onclick="presetTimeSeries('신한')">신한 전 분기 추이</button>
@@ -214,14 +215,7 @@
         </select>
       </div>
       <div class="field">
-        <label>문서 유형</label>
-        <select id="up-doctype">
-          <option value="report">분기보고서 (📄)</option>
-          <option value="review">검토보고서 (📝)</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>PDF 파일</label>
+        <label>보고서 PDF (분기/사업)</label>
         <input type="file" id="up-file" accept=".pdf">
       </div>
       <button class="btn" id="up-btn" onclick="doUpload()">업로드 시작</button>
@@ -287,8 +281,23 @@
     <div id="results-info"></div>
     <div class="compare-grid cols-2" id="compare-grid"></div>
 
+    <!-- §5.4 주석 RAG (옵트인·인용 강제) -->
+    <div style="margin-top:24px; border-top:1px dashed #d1d5db; padding-top:16px;">
+      <h3 style="font-size:15px; font-weight:700; color:#5b21b6;">🤖 주석 자연어 질의 (AI 보조 · 인용 강제)</h3>
+      <p style="color:#6b7280; font-size:12px; margin:4px 0 10px;">
+        4사 주석 텍스트에 자연어로 질의합니다. <strong>숫자는 생성하지 않으며</strong>(정량은 재무제표 비교 탭),
+        답변은 항상 <strong>출처(회사·주석번호·페이지)</strong>를 동반합니다. 로컬 Ollama 옵트인 — 미가동 시 검색 결과만 표시.
+      </p>
+      <div class="search-bar">
+        <input type="text" id="rag-q" placeholder="예: 4사 중 공정가치 Level 3 민감도 분석을 공시한 곳과 그 가정은?">
+        <select id="rag-fsdiv"><option value="연결">연결</option><option value="별도">별도</option></select>
+        <button class="btn" style="background:#5b21b6;" onclick="doRag()">질의</button>
+      </div>
+      <div id="rag-result"></div>
+    </div>
+
     <div class="footer-note">
-      ℹ️ 이 페이지에 표시된 모든 표·숫자는 원본 PDF의 그래픽을 그대로 렌더링한 것이며, AI는 어떠한 숫자도 재구성·환산하지 않습니다.
+      ℹ️ 표·숫자는 원본 PDF 그래픽을 그대로 렌더링하며 AI는 숫자를 재구성·환산하지 않습니다. AI 답변(보라 박스)은 주석 텍스트 기반이며 출처 인용을 동반합니다(human-in-the-loop 검증 필요).
     </div>
   </div>
 
@@ -330,29 +339,30 @@
   const API = "";
   const COMPANIES = ["신한", "KB", "하나", "우리"];
   let LIBRARY = { matrix: {}, available_periods: [], entries: [] };
-  let SELECTED = new Set();      // "회사/기간#doc_type" 문자열들 (doc_type: report|review)
-  let INDEX_STATUS_MAP = {};     // "회사/기간/doc_type" -> status
+  let SELECTED = new Set();      // "회사/기간#연결|별도" (fs_div 1급 축)
+  let INDEX_STATUS_MAP = {};     // "회사/기간/report" -> status (내부 소스는 항상 분기보고서)
 
-  const DOC_TYPES = ["report", "review"];
-  const DOC_LABEL = { report: "분기", review: "검토" };
-  const DOC_ICON = { report: "📄", review: "📝" };
-  const DOC_FULL = { report: "분기보고서", review: "검토보고서" };
+  // 연결/별도(CFS/OFS) 가 1급 선택 축. 내부 문서 소스는 항상 report(분기보고서)이며
+  // 그 안의 연결/별도 주석을 note.fs_div 로 구분한다.
+  const FS_DIVS = ["연결", "별도"];
+  const FSDIV_ICON = { 연결: "🔗", 별도: "🏢" };
+  const FSDIV_FULL = { 연결: "연결재무제표", 별도: "별도재무제표" };
 
-  // SELECTED 키 헬퍼: "회사/기간#doc_type"
-  function selKey(company, period, docType) { return `${company}/${period}#${docType}`; }
+  // SELECTED 키 헬퍼: "회사/기간#연결"
+  function selKey(company, period, fsdiv) { return `${company}/${period}#${fsdiv}`; }
   function parseSelKey(key) {
-    const [cp, docType] = key.split("#");
+    const [cp, fsdiv] = key.split("#");
     const [company, period] = cp.split("/");
-    return { company, period, docType: docType || "report" };
+    return { company, period, fsdiv: fsdiv || "연결" };
   }
-  // 해당 셀의 doc_type 이 실제 인덱싱돼 있는지
-  function docIndexed(entry, docType) {
-    if (!entry) return false;
-    return docType === "review" ? !!entry.review_indexed : !!entry.indexed;
+  // 해당 셀에 그 fs_div 주석이 인덱싱됐는지 (report 인덱싱 + 해당 fs_div 주석수>0)
+  function fsIndexed(entry, fsdiv) {
+    if (!entry || !entry.indexed) return false;
+    return (entry["notes_count_" + fsdiv] || 0) > 0;
   }
-  function docNotesCount(entry, docType) {
+  function fsNotesCount(entry, fsdiv) {
     if (!entry) return null;
-    return docType === "review" ? entry.review_notes_count : entry.notes_count;
+    return entry["notes_count_" + fsdiv] || 0;
   }
 
   // ----- Tabs -----
@@ -400,37 +410,32 @@
       html += `<tr><th class="company-col">${c}</th>`;
       for (const p of periods) {
         const entry = LIBRARY.entries.find(e => e.company === c && e.period === p);
-        // 셀이 채워진 것으로 간주: report 또는 review 중 하나라도 인덱싱됨
-        const anyIndexed = docIndexed(entry, "report") || docIndexed(entry, "review");
-        const anyRunning = DOC_TYPES.some(dt => {
-          const st = INDEX_STATUS_MAP[`${c}/${p}/${dt}`];
-          return st && st.status === "running";
-        });
+        // 셀 채움 기준: 분기보고서(report) 인덱싱됨 (그 안에 연결/별도 주석 포함)
+        const anyIndexed = entry && entry.indexed;
+        const st0 = INDEX_STATUS_MAP[`${c}/${p}/report`];
+        const anyRunning = st0 && st0.status === "running";
 
         let inner, cls;
         if (entry && (anyIndexed || anyRunning)) {
-          // doc_type 별 선택 가능한 pill 2줄 (분기 / 검토)
-          inner = `<div class="doc-pills">` + DOC_TYPES.map(dt => {
-            const indexed = docIndexed(entry, dt);
-            const st = INDEX_STATUS_MAP[`${c}/${p}/${dt}`];
-            const running = st && st.status === "running";
-            const isSel = SELECTED.has(selKey(c, p, dt));
-            if (running) {
+          // 연결/별도(fs_div) 별 선택 가능한 pill 2줄
+          inner = `<div class="doc-pills">` + FS_DIVS.map(fd => {
+            if (anyRunning) {
               return `<div class="doc-pill indexing">
-                        <span class="dp-label">${DOC_ICON[dt]} ${DOC_LABEL[dt]}</span>
-                        <span class="dp-count">${Math.round((st.progress||0)*100)}%</span></div>`;
+                        <span class="dp-label">${FSDIV_ICON[fd]} ${fd}</span>
+                        <span class="dp-count">${Math.round((st0.progress||0)*100)}%</span></div>`;
             }
-            if (!indexed) {
-              // 미보유 doc_type → 비활성 표시 (검토 –)
-              return `<div class="doc-pill absent">
-                        <span class="dp-label">${DOC_ICON[dt]} ${DOC_LABEL[dt]}</span>
+            const cnt = fsNotesCount(entry, fd);
+            const isSel = SELECTED.has(selKey(c, p, fd));
+            if (!cnt) {
+              // 해당 fs_div 주석 미추출(예: 별도 0건) → 비활성
+              return `<div class="doc-pill absent" title="${fd} 주석 미추출(후속 예정)">
+                        <span class="dp-label">${FSDIV_ICON[fd]} ${fd}</span>
                         <span class="dp-count">–</span></div>`;
             }
-            const cnt = docNotesCount(entry, dt);
             return `<div class="doc-pill${isSel ? ' selected' : ''}"
-                        onclick="onDocClick('${c}','${p}','${dt}',event)">
-                      <span class="dp-label">${isSel ? '✓' : DOC_ICON[dt]} ${DOC_LABEL[dt]}</span>
-                      <span class="dp-count">${cnt != null ? cnt : '–'}</span></div>`;
+                        onclick="onDocClick('${c}','${p}','${fd}',event)">
+                      <span class="dp-label">${isSel ? '✓' : FSDIV_ICON[fd]} ${fd}</span>
+                      <span class="dp-count">${cnt}</span></div>`;
           }).join("") + `</div>`;
           cls = anyRunning ? "indexing" : "filled";
         } else {
@@ -453,10 +458,10 @@
     showTab("upload");
   };
 
-  // doc_type pill 클릭 → 해당 (회사/기간/doc_type) 선택 토글
-  window.onDocClick = function(company, period, docType, ev) {
+  // 연결/별도 pill 클릭 → 해당 (회사/기간/fs_div) 선택 토글
+  window.onDocClick = function(company, period, fsdiv, ev) {
     if (ev) ev.stopPropagation();
-    const key = selKey(company, period, docType);
+    const key = selKey(company, period, fsdiv);
     if (SELECTED.has(key)) SELECTED.delete(key);
     else SELECTED.add(key);
     renderMatrix();
@@ -472,8 +477,8 @@
       return;
     }
     bar.innerHTML = [...SELECTED].map(k => {
-      const { company, period, docType } = parseSelKey(k);
-      return `<span class="chip">${DOC_ICON[docType]} ${company}·${period}·${DOC_LABEL[docType]}<button onclick="removeSelection('${k}')">×</button></span>`;
+      const { company, period, fsdiv } = parseSelKey(k);
+      return `<span class="chip">${FSDIV_ICON[fsdiv]} ${company}·${period}·${fsdiv}<button onclick="removeSelection('${k}')">×</button></span>`;
     }).join("") + `<span style="margin-left:auto; font-size:12px; color:#6b7280;">${SELECTED.size}개 선택됨</span>`;
     btn.disabled = false;
   }
@@ -485,17 +490,31 @@
   };
 
   // ----- Presets -----
-  // 셀의 기본 doc_type: report 인덱싱되어 있으면 report, 아니면 review (없으면 null)
-  function defaultDocType(company, period) {
+  // 셀의 기본 fs_div: 연결 주석 있으면 연결, 아니면 별도(있을 때), 없으면 null
+  function defaultFsdiv(company, period) {
     const entry = LIBRARY.entries.find(e => e.company === company && e.period === period);
-    if (docIndexed(entry, "report")) return "report";
-    if (docIndexed(entry, "review")) return "review";
+    if (fsIndexed(entry, "연결")) return "연결";
+    if (fsIndexed(entry, "별도")) return "별도";
     return null;
   }
   function addDefaultSelection(company, period) {
-    const dt = defaultDocType(company, period);
-    if (dt) SELECTED.add(selKey(company, period, dt));
+    const fd = defaultFsdiv(company, period);
+    if (fd) SELECTED.add(selKey(company, period, fd));
   }
+
+  // 신한 중심 4사 비교: 같은 기간(신한 보유 최신) 연결로 4사 일괄 선택
+  window.presetSinhanVsPeers = function() {
+    const sh = LIBRARY.matrix["신한"] || [];
+    if (sh.length === 0) return toast("신한 데이터가 없습니다.");
+    const p = sh[sh.length - 1];
+    SELECTED.clear();
+    for (const c of ["신한", "KB", "하나", "우리"]) {
+      if ((LIBRARY.matrix[c] || []).includes(p)) addDefaultSelection(c, p);
+    }
+    renderMatrix();
+    renderSelectedBar();
+    toast(`신한 중심 4사 비교: ${p} 연결`);
+  };
 
   window.presetLatestQuarter = function() {
     const periods = LIBRARY.available_periods;
@@ -551,12 +570,12 @@
   window.doUpload = async function() {
     const company = document.getElementById("up-company").value;
     const period = document.getElementById("up-period").value;
-    const docType = document.getElementById("up-doctype").value;
+    const docType = "report";  // 내부 소스는 항상 분기보고서(연결+별도 주석 포함)
     const file = document.getElementById("up-file").files[0];
     if (!file) return toast("PDF 파일을 선택하세요.");
 
     const status = document.getElementById("up-status");
-    status.innerHTML = `<div class="info-banner">업로드 중... ${file.name} (${DOC_FULL[docType]})</div>`;
+    status.innerHTML = `<div class="info-banner">업로드 중... ${file.name}</div>`;
 
     const form = new FormData();
     form.append("file", file);
@@ -571,14 +590,14 @@
       return;
     }
 
-    status.innerHTML = `<div class="info-banner">✓ 업로드 완료 (${data.pages}p, ${DOC_FULL[docType]}). 인덱싱을 시작합니다...</div>`;
+    status.innerHTML = `<div class="info-banner">✓ 업로드 완료 (${data.pages}p). 인덱싱을 시작합니다...</div>`;
     await fetch(`${API}/api/library/index/${company}/${period}?doc_type=${docType}`, { method: "POST" });
     pollIndexProgress(company, period, docType);
   };
 
   async function pollIndexProgress(company, period, docType) {
     const status = document.getElementById("up-status");
-    const docLabel = DOC_FULL[docType] || "분기보고서";
+    const docLabel = "보고서";
     const statusKey = `${company}/${period}/${docType}`;
     const interval = setInterval(async () => {
       const res = await fetch(`${API}/api/library/index/status`).then(r => r.json());
@@ -664,8 +683,8 @@
       return;
     }
     bar.innerHTML = [...SELECTED].map(k => {
-      const { company, period, docType } = parseSelKey(k);
-      return `<span class="chip">${DOC_ICON[docType]} ${company}·${period}·${DOC_LABEL[docType]}</span>`;
+      const { company, period, fsdiv } = parseSelKey(k);
+      return `<span class="chip">${FSDIV_ICON[fsdiv]} ${company}·${period}·${fsdiv}</span>`;
     }).join("") + `<span style="margin-left:auto; font-size:12px; color:#6b7280;">${SELECTED.size}개 비교</span>`;
   }
 
@@ -675,9 +694,10 @@
     const mode = document.getElementById("mode").value;
     if (!q) return toast("검색어를 입력하세요.");
 
+    // 내부 문서 소스는 항상 report(분기보고서), 선택 축은 fs_div(연결/별도)
     const targets = [...SELECTED].map(k => {
-      const { company, period, docType } = parseSelKey(k);
-      return { company, period, doc_type: docType };
+      const { company, period, fsdiv } = parseSelKey(k);
+      return { company, period, doc_type: "report", fs_div: fsdiv };
     });
 
     const res = await fetch(`${API}/api/compare`, {
@@ -688,14 +708,17 @@
     const data = await res.json();
 
     let info = `<div class="info-banner"><strong>"${q}"</strong> 매칭 결과 (${data.matches.length}개): `;
-    info += data.matches.map(m => `${DOC_ICON[m.doc_type || 'report']} ${m.company}·${m.period} #${m.note_no}`).join(" · ");
+    info += data.matches.map(m => `${FSDIV_ICON[m.fs_div || '연결']} ${m.company}·${m.period} #${m.note_no}`).join(" · ");
     info += `</div>`;
 
     if (data.unit_warning) {
       info += `<div class="warn-banner">⚠️ 단위 차이: ${data.units_seen.join(", ")} — 비교 시 단위를 직접 확인하세요.</div>`;
     }
     if (data.missing.length > 0) {
-      info += `<div class="warn-banner">⚠️ 매칭 실패: ${data.missing.map(m => `${m.company}·${m.period}`).join(", ")}</div>`;
+      const sepMiss = targets.some(t => t.fs_div === "별도");
+      info += `<div class="warn-banner">⚠️ 매칭 실패: ${data.missing.map(m => `${m.company}·${m.period}`).join(", ")}`
+        + (sepMiss ? ` — <strong>별도 주석은 현재 추출되지 않았습니다(연결만 보유). 별도 주석 추출은 후속 작업입니다.</strong>` : "")
+        + `</div>`;
     }
     document.getElementById("results-info").innerHTML = info;
 
@@ -705,11 +728,11 @@
 
     grid.innerHTML = data.matches.map((m, i) => {
       const lowConf = m.score < 0.85;
-      const dt = m.doc_type || "report";
+      const fd = m.fs_div || "연결";
       return `<div class="compare-panel">
         <div class="panel-head">
           <div class="top">
-            <span>${DOC_ICON[dt]} ${m.company} · ${m.period} · ${DOC_FULL[dt]}</span>
+            <span>${FSDIV_ICON[fd]} ${m.company} · ${m.period} · ${FSDIV_FULL[fd]} 주석</span>
             <span>p.${m.page_start}-${m.page_end} · score ${m.score}${lowConf ? ' <span class="badge-low">낮은 신뢰도</span>' : ''}</span>
           </div>
           <div class="title">주석 ${m.note_no} — ${m.title}${m.detected_unit ? ' <span style="color:#6b7280;font-weight:normal;">(단위: ' + m.detected_unit + ')</span>' : ''}</div>
@@ -720,13 +743,12 @@
 
     for (let i = 0; i < data.matches.length; i++) {
       const m = data.matches[i];
-      renderPdfRange(m.company, m.period, m.page_start, m.page_end, `pdf-${i}`, m.doc_type || "report");
+      renderPdfRange(m.company, m.period, m.page_start, m.page_end, `pdf-${i}`);  // 항상 분기보고서(report)
     }
   };
 
-  async function renderPdfRange(company, period, start, end, containerId, docType) {
-    const dt = docType || "report";
-    const url = `${API}/api/pdf?company=${encodeURIComponent(company)}&period=${encodeURIComponent(period)}&doc_type=${encodeURIComponent(dt)}`;
+  async function renderPdfRange(company, period, start, end, containerId) {
+    const url = `${API}/api/pdf?company=${encodeURIComponent(company)}&period=${encodeURIComponent(period)}&doc_type=report`;
     const pdf = await window.pdfjsLib.getDocument(url).promise;
     const container = document.getElementById(containerId);
     container.innerHTML = "";
@@ -1064,6 +1086,45 @@
     t.classList.add("show");
     setTimeout(() => t.classList.remove("show"), 2000);
   }
+  // ----- 주석 RAG (§5.4) -----
+  window.doRag = async function() {
+    const q = document.getElementById("rag-q").value.trim();
+    const fsdiv = document.getElementById("rag-fsdiv").value;
+    if (!q) return toast("질의를 입력하세요.");
+    const out = document.getElementById("rag-result");
+    out.innerHTML = `<div class="info-banner">🤖 주석 검색 중...</div>`;
+    // 선택된 회사가 있으면 그 회사들로 한정, 없으면 전체
+    const comps = [...new Set([...SELECTED].map(k => parseSelKey(k).company))];
+    const params = new URLSearchParams({ q, fs_div: fsdiv });
+    if (comps.length) params.set("companies", comps.join(","));
+    let d;
+    try { d = await fetch(`${API}/api/notes/rag?${params}`).then(r => r.json()); }
+    catch (e) { out.innerHTML = `<div class="warn-banner">질의 실패: ${e}</div>`; return; }
+
+    let h = "";
+    if (d.answer) {
+      // AI 답변 — 결정론 결과와 구분되는 보라 톤
+      h += `<div style="background:#f5f3ff; border:1px solid #ddd6fe; border-left:4px solid #7c3aed; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+        <div style="font-size:11px; font-weight:700; color:#5b21b6; margin-bottom:6px;">🤖 AI 답변 (주석 기반 · 검증 필요)</div>
+        <div style="font-size:13px; color:#1f2937; white-space:pre-wrap; line-height:1.6;">${(d.answer).replace(/</g,'&lt;')}</div></div>`;
+    } else if (d.mode === "retrieval_only") {
+      h += `<div class="info-banner">ℹ️ LLM 비활성(Ollama 미가동) — 검색된 출처만 표시합니다.</div>`;
+    } else if (d.mode === "no_evidence") {
+      h += `<div class="warn-banner">근거가 될 ${fsdiv} 주석을 찾지 못했습니다.${fsdiv === '별도' ? ' (별도 주석은 현재 미추출 — 후속 예정)' : ''}</div>`;
+    }
+    if ((d.sources || []).length) {
+      h += `<div style="font-size:12px; color:#6b7280; margin:6px 0 4px;">📎 출처 (클릭 시 원본 PDF):</div><div style="display:flex; gap:6px; flex-wrap:wrap;">`;
+      h += d.sources.map(s => {
+        const url = `${API}/api/pdf?company=${encodeURIComponent(s.company)}&period=${encodeURIComponent(s.period)}&doc_type=report#page=${s.page_start}`;
+        return `<span class="chip" style="cursor:pointer; background:#ede9fe; color:#5b21b6;" title="${(s.title||'').replace(/"/g,'')}"
+          onclick="window.open('${url}','_blank','width=1000,height=1200,scrollbars=yes,resizable=yes')">
+          ${s.company}·${s.period} 주석${s.note_no} p${s.page_start} · ${(s.score*100).toFixed(0)}%</span>`;
+      }).join("");
+      h += `</div>`;
+    }
+    out.innerHTML = h;
+  };
+
   window.toast = toast;
   window.showTab = showTab;
 

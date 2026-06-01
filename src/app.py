@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 
 import collect_dart as cdart  # DART 수집 로직 재사용(동일 storage 레이아웃)
 import fs_compare  # 재무제표 결정론 비교 엔진(증감/연결vs별도/벤치/비율 + provenance)
+import notes_rag  # 주석 RAG(§5.4, 옵트인) — 정성 텍스트 전용, 숫자 무경유·인용 강제
 
 # ----------------------------------------------------------------------------
 # 설정
@@ -1139,6 +1140,7 @@ async def compare(payload: ComparePayload):
                 "company": target.company,
                 "period": target.period,
                 "doc_type": target.doc_type,
+                "fs_div": target.fs_div,
                 "note_no": hit["no"],
                 "title": hit["title"],
                 "page_start": hit["page_start"],
@@ -1478,6 +1480,56 @@ async def fs_benchmark(period: str, account_id: str, fs_div: str = "연결"):
 @app.get("/api/fs/ratio")
 async def fs_ratio(company: str, period: str, fs_div: str = "연결"):
     return fs_compare.ratio(company, period, fs_div)
+
+
+# ----------------------------------------------------------------------------
+# 주석 RAG (§5.4, 옵트인) — 정성 텍스트 전용. 숫자 무경유·출처 인용 강제·Ollama 옵트인.
+# ----------------------------------------------------------------------------
+@app.get("/api/notes/rag")
+async def notes_rag_query(q: str, fs_div: str = "연결",
+                          companies: Optional[str] = None,
+                          period: Optional[str] = None, top_k: int = 5):
+    q = (q or "").strip()
+    if not q:
+        raise HTTPException(400, "질의가 비어 있습니다.")
+    want_companies = set((companies or "").split(",")) - {""} or set(VALID_COMPANIES)
+
+    # 인덱싱된 report 셀 수집(주석 소스). 숫자 아님 — 주석 텍스트만.
+    cells = []
+    for e in load_catalog()["entries"]:
+        if e.get("company") in want_companies and e.get("indexed"):
+            if period and e.get("period") != period:
+                continue
+            idx = _load_index(e["company"], e["period"], "report")
+            if idx:
+                cells.append({"company": e["company"], "period": e["period"], "index": idx})
+
+    try:
+        q_emb = (await make_embedding(q)).tolist()
+        sources = notes_rag.retrieve(q_emb, cells, fs_div=fs_div, top_k=top_k)
+        for s in sources:
+            s["text"] = notes_rag.extract_note_text(
+                s["company"], s["period"], s.get("page_start"), s.get("page_end"))
+    except Exception as e:
+        raise HTTPException(500, _safe_err(e))
+
+    # 인용 강제(불변): 근거(sources) 없으면 답변 생성 안 함. Ollama off 면 retrieval_only.
+    if not sources:
+        return {"query": q, "fs_div": fs_div, "sources": [], "answer": None,
+                "mode": "no_evidence", "ollama": _OLLAMA_AVAILABLE}
+    answer = None
+    mode = "retrieval_only"
+    if _OLLAMA_AVAILABLE:
+        try:
+            answer = await notes_rag.answer_ollama(q, sources, OLLAMA_URL, OLLAMA_MODEL)
+            mode = "rag" if answer else "retrieval_only"
+        except Exception as e:
+            print(f"[notes_rag] LLM 생성 실패(무시): {_safe_err(e)}", file=sys.stderr)
+    # 응답엔 본문 text 대신 출처 메타만 노출(원문 보호·경량화). answer 는 sources 동반 보장.
+    src_out = [{k: s[k] for k in ("company", "period", "fs_div", "note_no",
+                                   "title", "page_start", "page_end", "score")} for s in sources]
+    return {"query": q, "fs_div": fs_div, "sources": src_out,
+            "answer": answer, "mode": mode, "ollama": _OLLAMA_AVAILABLE}
 
 
 # 정적 파일 서빙
