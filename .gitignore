@@ -23,3 +23,7 @@ docs_cache/
 # 로컬 전용 (머신별 권한·핸드오프)
 .claude/settings.local.json
 handoff/
+
+# 빌드 자산 (대용량·재생성 가능)
+src/models/
+build/
