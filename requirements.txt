@@ -14,6 +14,8 @@ lxml>=4.9.0
 # 검색 (오프라인 임베딩 + BM25). 부재 시 bigram 폴백.
 # sentence-transformers>=2.5
 # rank-bm25>=0.2.2
+# 한국어 형태소 토크나이저(BM25 정밀도↑). 부재 시 정규식 폴백.
+kiwipiepy>=0.17
 
 # 테스트
 pytest>=8.0

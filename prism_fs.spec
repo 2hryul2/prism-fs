@@ -23,7 +23,7 @@ binaries = []
 # 앱 모듈 + uvicorn 런타임 서브모듈(동적 import 라 명시 필요).
 hiddenimports = [
     "app", "paths", "safety", "fs_compare", "notes_rag",
-    "note_filters", "note_topics", "collect_dart",
+    "note_filters", "note_topics", "collect_dart", "synonyms",
     "uvicorn.lifespan.on", "uvicorn.lifespan.off",
     "uvicorn.loops.auto", "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets.auto",
@@ -32,7 +32,7 @@ hiddenimports = [
 # 무거운 패키지는 데이터·바이너리·서브모듈 일괄 수집(누락 시 frozen 기동 실패 방지).
 for pkg in ("sentence_transformers", "transformers", "torch", "tokenizers",
             "safetensors", "fitz", "rank_bm25", "sklearn", "scipy",
-            "huggingface_hub", "fastapi", "starlette"):
+            "huggingface_hub", "fastapi", "starlette", "kiwipiepy", "kiwipiepy_model"):
     try:
         d, b, h = collect_all(pkg)
         datas += d

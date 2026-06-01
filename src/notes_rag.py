@@ -42,12 +42,34 @@ def _cosine(a, b) -> float:
     return float(np.dot(a, b) / denom)
 
 
+def _best_unit(query_emb, note: Dict[str, Any]):
+    """노트의 제목 + 본문 청크 중 질의와 최고 cosine 유닛(점수·page·text).
+
+    text 는 최고 유닛이 청크일 때만 채워짐(제목이 최고면 None → 호출부에서 페이지 추출 폴백).
+    구(舊) 인덱스(chunks 부재)는 제목 임베딩만 평가(하위호환).
+    """
+    best_s = _cosine(query_emb, note["embedding"]) if note.get("embedding") else -1.0
+    best_page = note.get("page_start")
+    best_text = None
+    for ch in note.get("chunks", []):
+        e = ch.get("embedding")
+        if not e:
+            continue
+        s = _cosine(query_emb, e)
+        if s > best_s:
+            best_s, best_page, best_text = s, ch.get("page", best_page), ch.get("text")
+    return best_s, best_page, best_text
+
+
 def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
              fs_div: str = "연결", top_k: int = 5, note_kind: str = "전체") -> List[Dict[str, Any]]:
-    """질의 임베딩 ↔ 각 셀 note title 임베딩 cosine. 동일 fs_div·kind note 중 상위 K.
+    """질의 임베딩 ↔ 각 노트의 제목+본문청크 cosine(최댓값). 동일 fs_div·kind 중 상위 K.
+
+    Phase C: 제목만이 아니라 본문 청크까지 평가 → 내용 질의 매칭. match_page/text 동봉
+    (최고 청크의 실제 페이지·원문) → 인용 페이지 정밀화. 구 인덱스는 제목-only 폴백.
 
     indexed_cells: [{company, period, index}] (index = index.json dict)
-    반환: [{company, period, fs_div, note_no, title, page_start, page_end, score}]
+    반환: [{company, period, fs_div, note_no, title, page_start, page_end, match_page, text, score}]
     """
     try:
         import note_filters
@@ -61,15 +83,16 @@ def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
                 continue
             if note_filters and not note_filters.matches_kind(n.get("title", ""), note_kind):
                 continue
-            emb = n.get("embedding")
-            if not emb:
+            if not n.get("embedding") and not n.get("chunks"):
                 continue
+            score, page, text = _best_unit(query_emb, n)
             cands.append({
                 "company": cell["company"], "period": cell["period"],
                 "fs_div": n.get("fs_div") or fs_div,
                 "note_no": n.get("no"), "title": n.get("title"),
                 "page_start": n.get("page_start"), "page_end": n.get("page_end"),
-                "score": round(_cosine(query_emb, emb), 4),
+                "match_page": page, "text": text,
+                "score": round(score, 4),
             })
     cands.sort(key=lambda c: c["score"], reverse=True)
     return cands[:top_k]
@@ -100,7 +123,8 @@ def build_prompt(query: str, sources: List[Dict[str, Any]]) -> str:
     """근거 청크에 출처 라벨을 강제 주입. 숫자 생성·재계산 금지 지시."""
     blocks = []
     for s in sources:
-        tag = f"[출처: {s['company']} {s['period']} {s.get('fs_div','')} 주석{s.get('note_no')} p{s.get('page_start')}]"
+        pg = s.get("match_page") or s.get("page_start")
+        tag = f"[출처: {s['company']} {s['period']} {s.get('fs_div','')} 주석{s.get('note_no')} p{pg}]"
         blocks.append(f"{tag}\n{s.get('text','')}")
     context = "\n\n---\n\n".join(blocks)
     return (
@@ -155,7 +179,8 @@ def build_compare_prompt(topic: str, sources: List[Dict[str, Any]]) -> str:
     """§5.3 비교 메모 — 회사 간 정책·가정 차이 정리. 출처 강제·숫자 생성 금지."""
     blocks = []
     for s in sources:
-        tag = f"[출처: {s['company']} {s['period']} {s.get('fs_div','')} 주석{s.get('note_no')} p{s.get('page_start')}]"
+        pg = s.get("match_page") or s.get("page_start")
+        tag = f"[출처: {s['company']} {s['period']} {s.get('fs_div','')} 주석{s.get('note_no')} p{pg}]"
         blocks.append(f"{tag}\n{(s.get('text','') or '')[:1200]}")  # 비교 컨텍스트 축약(속도)
     context = "\n\n---\n\n".join(blocks)
     return (
