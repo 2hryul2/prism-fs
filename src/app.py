@@ -1514,6 +1514,48 @@ async def fs_ratio(company: str, period: str, fs_div: str = "연결"):
     return fs_compare.ratio(company, period, fs_div)
 
 
+@app.get("/api/fs/timeseries")
+async def fs_timeseries(company: str, account_id: str, fs_div: str = "연결"):
+    return fs_compare.timeseries(company, account_id, fs_div)
+
+
+@app.get("/api/fs/timeseries-accounts")
+async def fs_timeseries_accounts():
+    return {"accounts": [{"account_id": a, "account_nm": n} for a, n in fs_compare.TIMESERIES_ACCOUNTS]}
+
+
+@app.get("/api/fs/flags")
+async def fs_flags(company: str, period: str, fs_div: str = "연결"):
+    return fs_compare.flags(company, period, fs_div)
+
+
+@app.get("/api/fs/consolidated-subtotals")
+async def fs_cons_subtotals(company: str, period: str):
+    return fs_compare.consolidated_subtotals(company, period)
+
+
+@app.get("/api/notes/account-refs")
+async def notes_account_refs(company: str, period: str, fs_div: str = "연결", top_k: int = 2):
+    """재무제표 핵심계정 ↔ 주석 정합 참조 — 계정명 임베딩 ↔ note title 임베딩 cosine 상위.
+    숫자 자동일치 금지(후보 제시·확정은 사용자). AI 무경유(임베딩 결정론)."""
+    idx = _load_index(company, period, "report")
+    if not idx:
+        raise HTTPException(404, f"인덱스 없음: {company}/{period}")
+    notes = [n for n in _notes_for_comparison(idx, fs_div) if "embedding" in n]
+    out = []
+    for aid, nm in fs_compare.TIMESERIES_ACCOUNTS:
+        try:
+            emb = (await make_embedding(nm)).tolist()
+        except Exception as e:
+            raise HTTPException(500, _safe_err(e))
+        scored = sorted(
+            ({"note_no": n["no"], "title": n["title"], "page_start": n.get("page_start"),
+              "page_end": n.get("page_end"), "score": round(cosine(emb, n["embedding"]), 4)}
+             for n in notes), key=lambda x: x["score"], reverse=True)
+        out.append({"account_id": aid, "account_nm": nm, "matches": scored[:top_k]})
+    return {"company": company, "period": period, "fs_div": fs_div, "rows": out}
+
+
 # ----------------------------------------------------------------------------
 # 주석 RAG (§5.4, 옵트인) — 정성 텍스트 전용. 숫자 무경유·출처 인용 강제·Ollama 옵트인.
 # ----------------------------------------------------------------------------

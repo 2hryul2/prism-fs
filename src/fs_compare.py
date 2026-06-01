@@ -72,6 +72,16 @@ def _find(accounts: List[dict], account_id: str) -> Optional[dict]:
     return next((a for a in accounts if a.get("account_id") == account_id), None)
 
 
+def list_periods(company: str) -> List[str]:
+    """해당 회사의 fs_structured.json 보유 기간 목록(정렬). 시계열용."""
+    base = LIBRARY_ROOT / company
+    if not base.is_dir():
+        return []
+    out = [p.name for p in base.iterdir()
+           if p.is_dir() and (p / "fs_structured.json").exists()]
+    return sorted(out)  # "2025Q2" < "2025Q3" < "2026Q1" 사전식=시간순
+
+
 def list_accounts(company: str, period: str, fs_div: str = "연결") -> List[dict]:
     """해당 셀의 계정 목록(원문 필드 보존)."""
     fs_key = FSDIV_TO_KEY.get(fs_div, "CFS")
@@ -226,3 +236,116 @@ def ratio(company: str, period: str, fs_div: str = "연결") -> Dict[str, Any]:
             _ratio_row("자기자본비율", E, A, "자본총계", "자산총계"),
         ],
     }
+
+
+# 시계열 추이 대상 핵심 계정(고정 — 결정론). 회사·기간 무관 IFRS 표준 account_id.
+TIMESERIES_ACCOUNTS = [
+    ("ifrs-full_Assets", "자산총계"),
+    ("ifrs-full_Liabilities", "부채총계"),
+    ("ifrs-full_Equity", "자본총계"),
+    ("ifrs-full_ProfitLossFromOperatingActivities", "영업이익"),
+    ("ifrs-full_ProfitLoss", "분기순이익"),
+]
+
+
+def timeseries(company: str, account_id: str, fs_div: str = "연결") -> Dict[str, Any]:
+    """여러 기간 셀에 걸친 당기(thstrm) 원문 추이 + 인접 기간 Δ/%(결정론).
+
+    안전경계: 각 기간의 당기 원문만 나열·인접 비교. 단위 환산·추론 없음.
+    """
+    fs_key = FSDIV_TO_KEY.get(fs_div, "CFS")
+    periods = list_periods(company)
+    points = []
+    acc_nm = account_id
+    for p in periods:
+        a = _find(_accounts(company, p, fs_key), account_id)
+        if a:
+            acc_nm = a.get("account_nm") or acc_nm
+        points.append({"period": p, "value": a.get("thstrm_amount") if a else None})
+    # 인접 기간 증감(결정론)
+    rows = []
+    for i, pt in enumerate(points):
+        cur = _to_int(pt["value"])
+        prev = _to_int(points[i - 1]["value"]) if i > 0 else None
+        row = {"period": pt["period"], "value": pt["value"], "delta": None, "pct": None}
+        if cur is not None and prev is not None:
+            dv = cur - prev
+            row["delta"] = str(dv)
+            row["pct"] = "N/A" if prev == 0 else round(dv / abs(prev) * 100, 2)
+            row["provenance"] = {
+                "formula": f"Δ = {pt['period']} − {points[i-1]['period']} (당기 원문)",
+                "inputs": [
+                    {"label": pt["period"], "raw": pt["value"], "account_id": account_id, "period": pt["period"], "fs_div": fs_div},
+                    {"label": points[i-1]["period"], "raw": points[i-1]["value"], "account_id": account_id, "period": points[i-1]["period"], "fs_div": fs_div},
+                ],
+                "result": f"Δ={dv} , 증감률={row['pct']}", "engine": "deterministic",
+            }
+        rows.append(row)
+    return {"company": company, "account_id": account_id, "account_nm": acc_nm,
+            "fs_div": fs_div, "rows": rows}
+
+
+# 이상치 임계(전기 대비 |증감률|). 결정론 — 단순 룰, 판단 아님.
+FLAG_PCT_THRESHOLD = 50.0
+
+
+def flags(company: str, period: str, fs_div: str = "연결") -> Dict[str, Any]:
+    """결정론 이상치 플래그(전기 대비). '확인 필요' 톤 — 판단/생성 없음.
+
+    룰: ① 부호 반전(당기·전기 부호 다름) ② |증감률|≥임계.
+    (연결/별도 계정 수 차이는 구조적 정상이라 '대응 없음'은 플래그하지 않음 — 노이즈 방지.)
+    """
+    fs_key = FSDIV_TO_KEY.get(fs_div, "CFS")
+    accs = _accounts(company, period, fs_key)
+    out = []
+    for a in accs:
+        sj = a.get("sj_div")
+        col = "frmtrm_q_amount" if (CMP_COL.get(sj, ("frmtrm",))[0] == "frmtrm_q") else "frmtrm_amount"
+        cur, prev = _to_int(a.get("thstrm_amount")), _to_int(a.get(col))
+        reasons = []
+        if cur is not None and prev is not None and prev != 0:
+            if (cur < 0) != (prev < 0):
+                reasons.append("부호 반전(전기↔당기)")
+            pct = abs((cur - prev) / abs(prev) * 100)
+            if pct >= FLAG_PCT_THRESHOLD:
+                reasons.append(f"급변 {round(pct,1)}% (≥{FLAG_PCT_THRESHOLD}%)")
+        if reasons:
+            out.append({"account_id": a.get("account_id"), "account_nm": a.get("account_nm"),
+                        "sj_div": sj, "thstrm": a.get("thstrm_amount"),
+                        "compare": a.get(col), "reasons": reasons})
+    return {"company": company, "period": period, "fs_div": fs_div,
+            "threshold_pct": FLAG_PCT_THRESHOLD, "flagged": out}
+
+
+def consolidated_subtotals(company: str, period: str) -> Dict[str, Any]:
+    """연결조정(자회사효과) sj_div 소계 상세 — 자산/부채/자본·손익 핵심계정 CFS−OFS + 비중(추정)."""
+    KEY = [("ifrs-full_Assets", "자산총계", "BS"),
+           ("ifrs-full_Liabilities", "부채총계", "BS"),
+           ("ifrs-full_Equity", "자본총계", "BS"),
+           ("ifrs-full_ProfitLossFromOperatingActivities", "영업이익", "CIS"),
+           ("ifrs-full_ProfitLoss", "분기순이익", "CIS")]
+    cfs, ofs = _accounts(company, period, "CFS"), _accounts(company, period, "OFS")
+    rows = []
+    for aid, nm, sj in KEY:
+        ca, oa = _find(cfs, aid), _find(ofs, aid)
+        cv, ov = (_to_int(ca.get("thstrm_amount")) if ca else None), (_to_int(oa.get("thstrm_amount")) if oa else None)
+        row = {"account_id": aid, "account_nm": nm, "sj_div": sj,
+               "cfs": ca.get("thstrm_amount") if ca else None,
+               "ofs": oa.get("thstrm_amount") if oa else None}
+        if cv is not None and ov is not None:
+            dv = cv - ov
+            row["diff"] = str(dv)
+            row["pct_of_cfs"] = "N/A" if cv == 0 else round(dv / abs(cv) * 100, 1)  # 자회사효과 비중(연결 대비)
+            row["provenance"] = {
+                "formula": "자회사효과(추정) = 연결 − 별도 ; 비중 = 차이 / |연결| × 100",
+                "inputs": [
+                    {"label": "연결", "raw": row["cfs"], "account_id": aid, "period": period, "fs_div": "연결"},
+                    {"label": "별도", "raw": row["ofs"], "account_id": aid, "period": period, "fs_div": "별도"},
+                ],
+                "result": f"차이={dv} , 비중={row['pct_of_cfs']}%", "engine": "deterministic",
+            }
+        else:
+            row["diff"] = None
+            row["flag"] = "대응 없음"
+        rows.append(row)
+    return {"company": company, "period": period, "rows": rows, "estimated": True}

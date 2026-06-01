@@ -312,6 +312,10 @@
       <button class="preset-btn fs-view" data-view="cons" onclick="showFsView('cons')">② 연결 vs 별도 (자회사효과)</button>
       <button class="preset-btn fs-view" data-view="bench" onclick="showFsView('bench')">③ 4사 벤치마킹</button>
       <button class="preset-btn fs-view" data-view="ratio" onclick="showFsView('ratio')">④ 안전 구조비율</button>
+      <button class="preset-btn fs-view" data-view="ts" onclick="showFsView('ts')">⑤ 시계열 추이</button>
+      <button class="preset-btn fs-view" data-view="flags" onclick="showFsView('flags')">⑥ 이상치 플래그</button>
+      <button class="preset-btn fs-view" data-view="adj" onclick="showFsView('adj')">⑦ 연결조정 상세</button>
+      <button class="preset-btn fs-view" data-view="refs" onclick="showFsView('refs')">⑧ 주석 정합참조</button>
     </div>
 
     <div id="fs-controls" style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px;"></div>
@@ -1234,7 +1238,7 @@
       opts.map(o=>`<option value="${o}" ${o===val?'selected':''}>${o}</option>`).join("")+`</select></div>`;
   }
   function renderFsControls(){
-    const periods=["2026Q1","2025Q3"];
+    const periods=["2026Q1","2025Q3","2025Q2"];
     const comp=fsOpt("fs-company","회사",fsSel.company,FS_COMPANIES,"fsSel.company=this.value;renderFsView()");
     const per=fsOpt("fs-period","기간",fsSel.period,periods,"fsSel.period=this.value;renderFsView()");
     const fsd=fsOpt("fs-fsdiv","연결/별도",fsSel.fsdiv,["연결","별도"],"fsSel.fsdiv=this.value;renderFsView()");
@@ -1244,9 +1248,10 @@
     const v=fsSel.view;
     let html="";
     if(v==="delta") html=comp+fsd;
-    else if(v==="cons") html=comp+per;
+    else if(v==="cons"||v==="adj") html=comp+per;
     else if(v==="bench") html=per+fsd+acc;
-    else if(v==="ratio") html=comp+per+fsd;
+    else if(v==="ratio"||v==="flags"||v==="refs") html=comp+per+fsd;
+    else if(v==="ts") html=comp+fsd+acc;  // 시계열: 전 기간 자동
     document.getElementById("fs-controls").innerHTML=html;
   }
 
@@ -1260,6 +1265,10 @@
     if(v==="cons") return fsViewCons();
     if(v==="bench") return fsViewBench();
     if(v==="ratio") return fsViewRatio();
+    if(v==="ts") return fsViewTs();
+    if(v==="flags") return fsViewFlags();
+    if(v==="adj") return fsViewAdj();
+    if(v==="refs") return fsViewRefs();
   }
   async function fsViewDelta(){
     const out=document.getElementById("fs-result");
@@ -1316,6 +1325,69 @@
     (d.rows||[]).forEach(r=>{
       if(r.value===null) h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.label}</strong></td><td style="text-align:center;"><span class="pc-badge">계산 불가</span></td><td style="color:#9ca3af;font-size:12px;">${r.reason||''}</td></tr>`;
       else h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.label}</strong></td><td style="text-align:right;padding:8px 10px;font-weight:700;">${r.value}${typeof r.value==='number'?'%':''}${fsProvBtn(r.provenance)}</td><td style="color:#6b7280;font-size:12px;">${r.provenance?r.provenance.formula:''}</td></tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+  // ⑤ 시계열 추이 (여러 기간 당기 원문 + 인접 Δ%)
+  async function fsViewTs(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("timeseries",{company:fsSel.company,account_id:fsSel.account,fs_div:fsSel.fsdiv});
+    let h=`<div class="info-banner">${d.account_nm} · ${fsSel.company} · ${fsSel.fsdiv} — 보유 전 기간 당기 원문 추이(인접 기간 Δ%는 결정론).</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">기간</th><th>당기(원문)</th><th>전기간 대비 Δ</th><th>증감률</th></tr>`;
+    (d.rows||[]).forEach(r=>{
+      const pos = r.delta!=null && Number(r.delta)>=0;
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.period}</strong></td><td style="text-align:right;padding:8px 10px;">${fsCell(r.value)}</td>`;
+      if(r.delta==null) h+=`<td style="text-align:center;color:#9ca3af;">—</td><td style="text-align:center;color:#9ca3af;">—</td>`;
+      else h+=`<td style="text-align:right;padding:8px 10px;color:${pos?'#047857':'#b91c1c'};">${pos?'▲':'▼'} ${fsGrp(r.delta)}${fsProvBtn(r.provenance)}</td><td style="text-align:right;padding:8px 10px;color:${pos?'#047857':'#b91c1c'};font-weight:600;">${r.pct}${typeof r.pct==='number'?'%':''}</td>`;
+      h+=`</tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+  // ⑥ 이상치 플래그 (전기 대비 부호반전·급변)
+  async function fsViewFlags(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("flags",{company:fsSel.company,period:fsSel.period,fs_div:fsSel.fsdiv});
+    let h=`<div class="warn-banner">전기 대비 <strong>부호 반전</strong> 또는 <strong>|증감률|≥${d.threshold_pct}%</strong> 계정을 "확인 필요"로 표시(결정론 룰 — 판단 아님). ${d.flagged.length}건.</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">계정 (${fsSel.company} · ${fsSel.period} · ${fsSel.fsdiv})</th><th>당기(원문)</th><th>비교(전기)</th><th>플래그</th></tr>`;
+    if(!d.flagged.length) h+=`<tr><td colspan="4" class="empty-note">이상치 없음</td></tr>`;
+    (d.flagged||[]).forEach(r=>{
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.account_nm}</strong> <span style="color:#9ca3af;font-size:11px;">${r.sj_div}</span></td><td style="text-align:right;padding:8px 10px;">${fsCell(r.thstrm)}</td><td style="text-align:right;padding:8px 10px;color:#6b7280;">${fsGrp(r.compare)}</td><td style="text-align:left;padding:8px 10px;">${r.reasons.map(x=>`<span class="pc-badge" style="background:#fef3c7;color:#92400e;">${x}</span>`).join(' ')}</td></tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+  // ⑦ 연결조정 상세 (자회사효과 소계 + 비중)
+  async function fsViewAdj(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>불러오는 중…</p>";
+    const d=await fsGet("consolidated-subtotals",{company:fsSel.company,period:fsSel.period});
+    let h=`<div class="warn-banner">자회사효과 = <strong>연결 − 별도</strong>, 비중 = 차이/|연결| (추정·연결조정 미반영·비감사). 한쪽만 존재 시 "대응 없음".</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">계정 (${fsSel.company} · ${fsSel.period})</th><th>연결(CFS)</th><th>별도(OFS)</th><th>자회사효과</th><th>비중</th></tr>`;
+    (d.rows||[]).forEach(r=>{
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.account_nm}</strong> <span style="color:#9ca3af;font-size:11px;">${r.sj_div}</span></td>`;
+      h+=`<td style="text-align:right;padding:8px 10px;">${r.cfs?fsCell(r.cfs):'<span class="pc-badge">대응 없음</span>'}</td>`;
+      h+=`<td style="text-align:right;padding:8px 10px;">${r.ofs?fsCell(r.ofs):'<span class="pc-badge">대응 없음</span>'}</td>`;
+      if(r.diff!=null) h+=`<td style="text-align:right;padding:8px 10px;">${fsCell(r.diff)}${fsProvBtn(r.provenance)}</td><td style="text-align:right;padding:8px 10px;font-weight:600;">${r.pct_of_cfs}${typeof r.pct_of_cfs==='number'?'%':''}</td>`;
+      else h+=`<td colspan="2" style="text-align:center;"><span class="pc-badge">계산 불가</span></td>`;
+      h+=`</tr>`;
+    });
+    h+=`</table></div>`; out.innerHTML=h;
+  }
+  // ⑧ 주석 정합참조 (계정 ↔ 주석 임베딩 후보)
+  async function fsViewRefs(){
+    const out=document.getElementById("fs-result");
+    out.innerHTML="<p style='color:#9ca3af;'>주석 매칭 중…</p>";
+    const _qs=new URLSearchParams({company:fsSel.company,period:fsSel.period,fs_div:fsSel.fsdiv}).toString();
+    const d=await fetch(`/api/notes/account-refs?${_qs}`).then(r=>r.json());
+    let h=`<div class="info-banner">재무제표 핵심계정 ↔ 관련 주석 후보(임베딩 유사도). 숫자 자동일치 아님 — <strong>후보 제시·확정은 담당자</strong>. 칩 클릭 시 원본 PDF.</div>`;
+    h+=`<div class="matrix-wrap"><table class="cov-table"><tr><th class="topic-col" style="text-align:left;">계정</th><th style="text-align:left;">관련 주석 후보 (유사도)</th></tr>`;
+    (d.rows||[]).forEach(r=>{
+      const chips=(r.matches||[]).map(m=>{
+        const url=`/api/pdf?company=${encodeURIComponent(fsSel.company)}&period=${encodeURIComponent(fsSel.period)}&doc_type=report#page=${m.page_start}`;
+        return `<span class="chip" style="cursor:pointer;" title="p${m.page_start}" onclick="window.open('${url}','_blank','width=1000,height=1200,scrollbars=yes,resizable=yes')">주석${m.note_no} ${m.title} · ${(m.score*100).toFixed(0)}%</span>`;
+      }).join(" ");
+      h+=`<tr><td style="text-align:left;padding:8px 10px;"><strong>${r.account_nm}</strong></td><td style="text-align:left;padding:8px 10px;">${chips||'<span class="empty-note">후보 없음</span>'}</td></tr>`;
     });
     h+=`</table></div>`; out.innerHTML=h;
   }

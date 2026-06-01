@@ -82,3 +82,47 @@ def test_cons_vs_sep_missing_side_flagged(monkeypatch):
     d = fs_compare.consolidated_vs_separate("C", "P")
     r = d["rows"][0]
     assert r["diff"] is None and r.get("flag") == "대응 없음"
+
+
+# ---- P3: 시계열·이상치·연결조정 상세 ----
+@skip_no_data
+def test_timeseries_multi_period_and_provenance():
+    d = fs_compare.timeseries("신한", "ifrs-full_Assets", "연결")
+    assert len(d["rows"]) >= 2  # 여러 기간 교차 로드
+    # 첫 기간은 delta None, 이후는 인접 비교 provenance 동봉
+    later = [r for r in d["rows"] if r.get("delta") is not None]
+    assert later and later[0]["provenance"]["engine"] == "deterministic"
+    # 원문 보존(가공 0)
+    for r in d["rows"]:
+        if r["value"] is not None:
+            assert isinstance(r["value"], str)
+
+
+@skip_no_data
+def test_flags_no_correspondence_noise_removed():
+    d = fs_compare.flags("신한", "2026Q1", "연결")
+    # '대응 없음'은 플래그하지 않음(구조적 정상) — 노이즈 제거
+    for f in d["flagged"]:
+        assert all("대응 없음" not in r for r in f["reasons"])
+        assert all(("부호 반전" in r or "급변" in r) for r in f["reasons"])
+
+
+@skip_no_data
+def test_consolidated_subtotals_diff_and_estimated():
+    d = fs_compare.consolidated_subtotals("신한", "2026Q1")
+    assert d["estimated"] is True
+    asset = next(r for r in d["rows"] if r["account_id"] == "ifrs-full_Assets")
+    assert int(asset["diff"]) == int(asset["cfs"]) - int(asset["ofs"])
+    assert asset["provenance"]["engine"] == "deterministic"
+
+
+def test_flags_threshold_rule(monkeypatch):
+    fake = [
+        {"account_id": "A", "account_nm": "급변계정", "sj_div": "BS", "thstrm_amount": "300", "frmtrm_amount": "100"},
+        {"account_id": "B", "account_nm": "안정계정", "sj_div": "BS", "thstrm_amount": "105", "frmtrm_amount": "100"},
+        {"account_id": "C", "account_nm": "부호반전", "sj_div": "CIS", "thstrm_amount": "-50", "frmtrm_q_amount": "50"},
+    ]
+    monkeypatch.setattr(fs_compare, "_accounts", lambda c, p, k: fake)
+    d = fs_compare.flags("X", "Y", "연결")
+    flagged = {f["account_id"] for f in d["flagged"]}
+    assert "A" in flagged and "C" in flagged and "B" not in flagged  # 200% 급변, 부호반전 / 5%는 정상
