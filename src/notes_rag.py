@@ -113,6 +113,43 @@ def build_prompt(query: str, sources: List[Dict[str, Any]]) -> str:
     )
 
 
+async def _generate(prompt: str, *, openai_key: Optional[str] = None,
+                    ollama_url: str = "", ollama_model: str = "",
+                    openai_model: str = "gpt-4o-mini", num_predict: int = 800) -> Optional[str]:
+    """LLM 생성 — OpenAI 키 있으면 OpenAI 우선, 없으면 로컬 Ollama. 둘 다 없으면 None.
+    키는 헤더로만 전송(로그·예외에 노출 금지)."""
+    if not _HAS_HTTPX:
+        return None
+    # 1) OpenAI 옵트인(키 존재 시)
+    if openai_key:
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                r = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {openai_key}"},
+                    json={"model": openai_model, "temperature": 0.0,
+                          "messages": [{"role": "user", "content": prompt}]},
+                )
+                r.raise_for_status()
+                return (r.json()["choices"][0]["message"]["content"] or "").strip() or None
+        except Exception:
+            pass  # OpenAI 실패 시 Ollama 폴백
+    # 2) 로컬 Ollama
+    if ollama_url and ollama_model:
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                r = await client.post(
+                    f"{ollama_url}/api/generate",
+                    json={"model": ollama_model, "prompt": prompt, "stream": False,
+                          "options": {"temperature": 0.0, "num_predict": num_predict, "top_p": 1.0}},
+                )
+                r.raise_for_status()
+                return (r.json().get("response") or "").strip() or None
+        except Exception:
+            return None
+    return None
+
+
 def build_compare_prompt(topic: str, sources: List[Dict[str, Any]]) -> str:
     """§5.3 비교 메모 — 회사 간 정책·가정 차이 정리. 출처 강제·숫자 생성 금지."""
     blocks = []
@@ -132,38 +169,18 @@ def build_compare_prompt(topic: str, sources: List[Dict[str, Any]]) -> str:
 
 
 async def answer_compare_ollama(topic: str, sources: List[Dict[str, Any]],
-                                url: str, model: str) -> Optional[str]:
-    """비교 메모 초안 생성(Ollama 옵트인). sources 없으면 None(인용 강제는 호출부)."""
-    if not _HAS_HTTPX or not sources:
+                                url: str, model: str, openai_key: Optional[str] = None) -> Optional[str]:
+    """비교 메모 초안(OpenAI 옵트인 우선 → Ollama). sources 없으면 None(인용 강제는 호출부)."""
+    if not sources:
         return None
-    prompt = build_compare_prompt(topic, sources)
-    try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
-            r = await client.post(
-                f"{url}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False,
-                      "options": {"temperature": 0.0, "num_predict": 800, "top_p": 1.0}},
-            )
-            r.raise_for_status()
-            return (r.json().get("response") or "").strip() or None
-    except Exception:
-        return None
+    return await _generate(build_compare_prompt(topic, sources), openai_key=openai_key,
+                           ollama_url=url, ollama_model=model, num_predict=800)
 
 
 async def answer_ollama(query: str, sources: List[Dict[str, Any]],
-                        url: str, model: str) -> Optional[str]:
-    """Ollama 생성(옵트인). 실패 시 None. (인용 강제는 호출부가 sources 동반 보장)"""
-    if not _HAS_HTTPX or not sources:
+                        url: str, model: str, openai_key: Optional[str] = None) -> Optional[str]:
+    """RAG 답변(OpenAI 옵트인 우선 → Ollama). sources 없으면 None(인용 강제는 호출부)."""
+    if not sources:
         return None
-    prompt = build_prompt(query, sources)
-    try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            r = await client.post(
-                f"{url}/api/generate",
-                json={"model": model, "prompt": prompt, "stream": False,
-                      "options": {"temperature": 0.0, "num_predict": 800, "top_p": 1.0}},
-            )
-            r.raise_for_status()
-            return (r.json().get("response") or "").strip() or None
-    except Exception:
-        return None
+    return await _generate(build_prompt(query, sources), openai_key=openai_key,
+                           ollama_url=url, ollama_model=model, num_predict=800)

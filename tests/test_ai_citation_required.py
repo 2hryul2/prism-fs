@@ -97,3 +97,11 @@ def test_compare_memo_endpoint_contract_live():
     assert "sources" in d
     if d.get("memo"):
         assert len(d["sources"]) > 0  # 인용 없는 초안 금지
+
+
+# ---- P7: OpenAI 옵트인 — provider 미설정 시 안전 반환 ----
+def test_generate_returns_none_when_no_provider():
+    import asyncio
+    out = asyncio.get_event_loop().run_until_complete(
+        notes_rag._generate("프롬프트", openai_key=None, ollama_url="", ollama_model=""))
+    assert out is None

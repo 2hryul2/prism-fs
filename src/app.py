@@ -122,6 +122,9 @@ except ImportError:
 # Ollama LLM 보정 (선택적 — 정확도 향상용)
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+# OpenAI 옵트인 — .env 키 존재 시 우선 사용(없으면 로컬 Ollama). 키는 헤더로만, 마스킹.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or None
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 USE_OLLAMA = os.getenv("USE_OLLAMA", "auto").lower()  # auto / true / false
 _OLLAMA_AVAILABLE = False
 
@@ -1485,6 +1488,8 @@ async def health():
         "embedding_backend": backend,
         "bm25_enabled": USE_BM25 and _HAS_BM25,
         "ollama_enabled": _OLLAMA_AVAILABLE,
+        "openai_enabled": bool(OPENAI_API_KEY),
+        "llm_provider": "openai" if OPENAI_API_KEY else ("ollama" if _OLLAMA_AVAILABLE else "none"),
         "ollama_model": OLLAMA_MODEL if _OLLAMA_AVAILABLE else None,
         "library_size": len(cat["entries"]),
     }
@@ -1611,9 +1616,9 @@ async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
         return {"topic": topic, "period": period, "fs_div": fs_div,
                 "sources": [], "memo": None, "mode": "no_evidence", "ollama": _OLLAMA_AVAILABLE}
     memo, mode = None, "retrieval_only"
-    if _OLLAMA_AVAILABLE:
+    if _OLLAMA_AVAILABLE or OPENAI_API_KEY:
         try:
-            memo = await notes_rag.answer_compare_ollama(topic, sources, OLLAMA_URL, OLLAMA_MODEL)
+            memo = await notes_rag.answer_compare_ollama(topic, sources, OLLAMA_URL, OLLAMA_MODEL, openai_key=OPENAI_API_KEY)
             mode = "memo" if memo else "retrieval_only"
         except Exception as e:
             print(f"[compare-memo] 생성 실패(무시): {_safe_err(e)}", file=sys.stderr)
@@ -1661,9 +1666,9 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
                 "mode": "no_evidence", "ollama": _OLLAMA_AVAILABLE}
     answer = None
     mode = "retrieval_only"
-    if _OLLAMA_AVAILABLE:
+    if _OLLAMA_AVAILABLE or OPENAI_API_KEY:
         try:
-            answer = await notes_rag.answer_ollama(q, sources, OLLAMA_URL, OLLAMA_MODEL)
+            answer = await notes_rag.answer_ollama(q, sources, OLLAMA_URL, OLLAMA_MODEL, openai_key=OPENAI_API_KEY)
             mode = "rag" if answer else "retrieval_only"
         except Exception as e:
             print(f"[notes_rag] LLM 생성 실패(무시): {_safe_err(e)}", file=sys.stderr)
