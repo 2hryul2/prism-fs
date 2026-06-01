@@ -18,9 +18,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import safety  # provenance 표준 형태 중앙화
+from paths import LIBRARY_ROOT  # dev·frozen 일관 storage 경로
 
 BASE_DIR = Path(__file__).resolve().parent
-LIBRARY_ROOT = BASE_DIR / "storage" / "library"
 
 COMPANIES = ["신한", "KB", "하나", "우리"]
 FSDIV_TO_KEY = {"연결": "CFS", "별도": "OFS"}

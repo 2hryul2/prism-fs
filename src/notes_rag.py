@@ -28,8 +28,9 @@ try:
 except ImportError:
     _HAS_HTTPX = False
 
+from paths import LIBRARY_ROOT  # dev·frozen 일관 storage 경로
+
 BASE_DIR = Path(__file__).resolve().parent
-LIBRARY_ROOT = BASE_DIR / "storage" / "library"
 
 MAX_PAGES_PER_NOTE = 3      # 노트당 추출 페이지 상한(예: page_start..+2)
 MAX_CHARS_PER_NOTE = 2000   # 노트당 텍스트 글자 상한(LLM 컨텍스트 폭주 방지)

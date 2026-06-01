@@ -56,10 +56,11 @@ import safety  # 시크릿 마스킹·provenance 중앙화
 # ----------------------------------------------------------------------------
 # 설정
 # ----------------------------------------------------------------------------
-# CWD 비의존: app.py 위치 기준(collect_dart.SCRIPT_DIR 과 동일 storage 공유)
-BASE_DIR = Path(__file__).resolve().parent
-STORAGE_ROOT = BASE_DIR / "storage"
-LIBRARY_ROOT = STORAGE_ROOT / "library"
+# CWD/frozen 비의존: paths 모듈이 dev·PyInstaller 양쪽 경로를 일관 해석.
+import paths  # noqa: E402
+BASE_DIR = paths.BUNDLE_DIR
+STORAGE_ROOT = paths.STORAGE_ROOT
+LIBRARY_ROOT = paths.LIBRARY_ROOT
 CATALOG_PATH = STORAGE_ROOT / "catalog.json"
 # Step 7: 주제사전 자동초안(build_topic_dict.py 산출). 있으면 coverage 토픽 소스로 사용.
 TOPIC_DICT_PATH = STORAGE_ROOT / "topic_dict.json"
@@ -99,7 +100,9 @@ WORDMAP_STATUS: Dict[str, Dict[str, Any]] = {}
 _SUFFIX_TO_REPRT = {"Q1": "11013", "Q2": "11012", "Q3": "11014", "FY": "11011"}
 
 # 임베딩 백엔드 자동 감지 (LLM API 없이도 동작)
-EMBED_MODEL_PATH = os.getenv("EMBED_MODEL_PATH", "jhgan/ko-sroberta-multitask")
+# frozen 번들이면 동봉 모델 폴더 우선(오프라인). 그 외엔 HF 식별자(개발).
+_DEFAULT_MODEL = str(paths.MODEL_DIR) if paths.MODEL_DIR.exists() else "jhgan/ko-sroberta-multitask"
+EMBED_MODEL_PATH = os.getenv("EMBED_MODEL_PATH", _DEFAULT_MODEL)
 USE_LOCAL_EMBED = False
 USE_BM25 = os.getenv("USE_BM25", "true").lower() == "true"
 USE_API = bool(os.getenv("OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY"))

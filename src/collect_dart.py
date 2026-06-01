@@ -79,10 +79,13 @@ except ImportError:
 # ----------------------------------------------------------------------------
 DART_BASE = "https://opendart.fss.or.kr/api"
 
-# 저장 루트 — main.py 와 동일 위치(상대경로 ./storage/library). 스크립트 위치 기준 절대경로로 고정.
+# 저장 루트 — paths 모듈로 dev·frozen 일관 해석(app.py 와 동일 storage 공유).
 SCRIPT_DIR = Path(__file__).resolve().parent
-STORAGE_ROOT = SCRIPT_DIR / "storage"
-LIBRARY_ROOT = STORAGE_ROOT / "library"
+try:
+    from paths import STORAGE_ROOT, LIBRARY_ROOT  # 앱 컨텍스트(번들/서버)
+except ImportError:  # CLI 단독 실행(폐쇄망 수집 스크립트) 폴백
+    STORAGE_ROOT = SCRIPT_DIR / "storage"
+    LIBRARY_ROOT = STORAGE_ROOT / "library"
 CORP_CODE_CACHE = STORAGE_ROOT / "corp_codes.json"
 
 # DART corp_name(공식 회사명) → 내부 라이브러리 표기 매핑.
@@ -147,7 +150,12 @@ def load_env_file(env_path: Optional[Path] = None) -> None:
     python-dotenv 의존을 피하기 위한 내장 5줄 파서. KEY=VALUE 형식만 처리하고,
     빈 줄/`#` 주석은 무시한다. 값에 = 가 있어도 첫 = 만 분리.
     """
-    env_path = env_path or (SCRIPT_DIR / ".env")
+    if env_path is None:
+        # frozen 이면 exe 옆(.env), dev 면 src/.env
+        try:
+            from paths import ENV_PATH as env_path
+        except ImportError:
+            env_path = SCRIPT_DIR / ".env"
     if not env_path.exists():
         return
     try:
