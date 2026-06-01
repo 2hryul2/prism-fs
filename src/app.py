@@ -688,6 +688,44 @@ def _extract_full_report_notes(candidates: List[Dict[str, Any]], total_pages: in
     return notes, scan_start
 
 
+# Phase D: 노트 본문-존재 최소 글자수(이 미만이면 헤더 오탐으로 보고 드롭). 보수적 하한.
+MIN_NOTE_BODY_CHARS = 30
+# 본문/단위 스캔 시 노트당 페이지 상한(마지막 노트가 문서 끝까지 걸쳐도 폭주 방지).
+NOTE_SCAN_PAGE_CAP = 8
+
+
+def _note_body_text(doc, page_start: int, page_end: int, cap_pages: int = NOTE_SCAN_PAGE_CAP) -> str:
+    """노트 페이지 범위의 본문 텍스트(캡 적용). 추출 검증·단위 탐지용(가공 없음)."""
+    if not page_start:
+        return ""
+    last = min(page_start + cap_pages - 1, page_end or page_start, doc.page_count)
+    out = []
+    for p in range(page_start, last + 1):
+        if 1 <= p <= doc.page_count:
+            out.append(doc[p - 1].get_text())
+    return "\n".join(out)
+
+
+def _annotate_notes(doc, notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """노트별 본문 존재 검증(헤더 오탐 드롭) + 노트별 단위 태깅. 텍스트 전용·환산 없음.
+
+    - 제목 헤더만 잡히고 본문이 사실상 없는 후보(목차 잔재·표 셀 등) 제거.
+    - 노트 페이지 범위에서 최빈 단위 표기를 note['detected_unit'] 로 보존(문서 1개 단위의 한계 보완).
+    """
+    kept = []
+    for n in notes:
+        body = _note_body_text(doc, n.get("page_start"), n.get("page_end"))
+        body_chars = len(re.sub(r"\s", "", body))
+        if body_chars < MIN_NOTE_BODY_CHARS:
+            continue  # 본문 없는 헤더 오탐 — 드롭
+        unit_counter: Dict[str, int] = {}
+        for m in UNIT_PATTERN.finditer(body):
+            unit_counter[m.group(1)] = unit_counter.get(m.group(1), 0) + 1
+        n["detected_unit"] = max(unit_counter, key=unit_counter.get) if unit_counter else None
+        kept.append(n)
+    return kept
+
+
 def extract_notes_heuristic(pdf_path: Path):
     """PDF 에서 주석 헤더 시퀀스를 순수 휴리스틱(정규식+단조 런)으로 추출.
 
@@ -724,6 +762,8 @@ def extract_notes_heuristic(pdf_path: Path):
                 if n.get("fs_div") is None:
                     n["fs_div"] = "연결"
 
+        # Phase D: 본문-존재 검증(헤더 오탐 드롭) + 노트별 단위 태깅
+        notes = _annotate_notes(doc, notes)
         detected_unit = _detect_unit(doc, scan_start)
         return notes, detected_unit, source_type
     finally:
