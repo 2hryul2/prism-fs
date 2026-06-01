@@ -276,6 +276,11 @@
         <option value="topic">주제 검색</option>
         <option value="number">번호 검색</option>
       </select>
+      <select id="cmp-kind" title="주석 종류 필터">
+        <option value="전체">전체</option>
+        <option value="주기">주기(회계정책)</option>
+        <option value="서술형">서술형</option>
+      </select>
       <button class="btn" onclick="doCompare()">검색</button>
     </div>
 
@@ -292,6 +297,7 @@
       <div class="search-bar">
         <input type="text" id="rag-q" placeholder="예: 4사 중 공정가치 Level 3 민감도 분석을 공시한 곳과 그 가정은?">
         <select id="rag-fsdiv"><option value="연결">연결</option><option value="별도">별도</option></select>
+        <select id="rag-kind" title="주석 종류"><option value="전체">전체</option><option value="주기">주기</option><option value="서술형">서술형</option></select>
         <button class="btn" style="background:#5b21b6;" onclick="doRag()">질의</button>
       </div>
       <div id="rag-result"></div>
@@ -342,6 +348,12 @@
           <label style="font-size:12px;color:#6b7280;font-weight:600;">연결/별도</label>
           <select id="cov-fsdiv" onchange="onInsightFsdivChange()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;">
             <option value="연결">연결</option><option value="별도">별도</option>
+          </select>
+        </div>
+        <div class="field" style="min-width:110px;">
+          <label style="font-size:12px;color:#6b7280;font-weight:600;">주석 종류</label>
+          <select id="cov-kind" onchange="onInsightFsdivChange()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;">
+            <option value="전체">전체</option><option value="주기">주기</option><option value="서술형">서술형</option>
           </select>
         </div>
       </div>
@@ -756,7 +768,7 @@
     const res = await fetch(`${API}/api/compare`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targets, query: q, mode }),
+      body: JSON.stringify({ targets, query: q, mode, note_kind: (document.getElementById("cmp-kind")||{}).value || "전체" }),
     });
     const data = await res.json();
 
@@ -902,7 +914,7 @@
     const res = await fetch(`${API}/api/coverage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targets: insightTargets(), topics: TOPICS }),
+      body: JSON.stringify({ targets: insightTargets(), topics: TOPICS, note_kind: (document.getElementById("cov-kind")||{}).value || "전체" }),
     });
     const d = await res.json();
 
@@ -1153,7 +1165,7 @@
     out.innerHTML = `<div class="info-banner">🤖 주석 검색 중...</div>`;
     // 선택된 회사가 있으면 그 회사들로 한정, 없으면 전체
     const comps = [...new Set([...SELECTED].map(k => parseSelKey(k).company))];
-    const params = new URLSearchParams({ q, fs_div: fsdiv });
+    const params = new URLSearchParams({ q, fs_div: fsdiv, note_kind: (document.getElementById("rag-kind")||{}).value || "전체" });
     if (comps.length) params.set("companies", comps.join(","));
     let d;
     try { d = await fetch(`${API}/api/notes/rag?${params}`).then(r => r.json()); }

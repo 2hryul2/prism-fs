@@ -42,17 +42,23 @@ def _cosine(a, b) -> float:
 
 
 def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
-             fs_div: str = "연결", top_k: int = 5) -> List[Dict[str, Any]]:
-    """질의 임베딩 ↔ 각 셀 note title 임베딩 cosine. 동일 fs_div note 중 상위 K.
+             fs_div: str = "연결", top_k: int = 5, note_kind: str = "전체") -> List[Dict[str, Any]]:
+    """질의 임베딩 ↔ 각 셀 note title 임베딩 cosine. 동일 fs_div·kind note 중 상위 K.
 
     indexed_cells: [{company, period, index}] (index = index.json dict)
     반환: [{company, period, fs_div, note_no, title, page_start, page_end, score}]
     """
+    try:
+        import note_filters
+    except ImportError:
+        note_filters = None
     cands: List[Dict[str, Any]] = []
     for cell in indexed_cells:
         idx = cell.get("index") or {}
         for n in idx.get("notes", []):
             if fs_div != "all" and n.get("fs_div") and n.get("fs_div") != fs_div:
+                continue
+            if note_filters and not note_filters.matches_kind(n.get("title", ""), note_kind):
                 continue
             emb = n.get("embedding")
             if not emb:

@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 import collect_dart as cdart  # DART 수집 로직 재사용(동일 storage 레이아웃)
 import fs_compare  # 재무제표 결정론 비교 엔진(증감/연결vs별도/벤치/비율 + provenance)
 import notes_rag  # 주석 RAG(§5.4, 옵트인) — 정성 텍스트 전용, 숫자 무경유·인용 강제
+import note_filters  # 주석 종류(주기/서술형) 결정론 필터
 
 # ----------------------------------------------------------------------------
 # 설정
@@ -1036,6 +1037,7 @@ class ComparePayload(BaseModel):
     targets: List[CompareTarget] = Field(..., min_length=1, max_length=12)
     query: str
     mode: Literal["topic", "number"] = "topic"
+    note_kind: Optional[Literal["전체", "주기", "서술형"]] = "전체"  # 주석 종류 필터
 
 
 def cosine(a, b):
@@ -1144,14 +1146,14 @@ async def compare(payload: ComparePayload):
                 target_no = int(payload.query)
             except ValueError:
                 raise HTTPException(400, "번호 모드에는 숫자만 입력 가능합니다.")
-            hit = next((n for n in _notes_for_comparison(idx, target.fs_div) if n["no"] == target_no), None)
+            hit = next((n for n in note_filters.filter_notes(_notes_for_comparison(idx, target.fs_div), payload.note_kind) if n["no"] == target_no), None)
             score = 1.0 if hit else 0.0
             confidence = "exact"
             match_type = "exact_no"
             lexical_hit = None
             keep = hit is not None
         else:
-            notes_with_emb = [n for n in _notes_for_comparison(idx, target.fs_div) if "embedding" in n]
+            notes_with_emb = [n for n in note_filters.filter_notes(_notes_for_comparison(idx, target.fs_div), payload.note_kind) if "embedding" in n]
             if not notes_with_emb:
                 missing.append({"company": target.company, "period": target.period,
                                 "doc_type": target.doc_type, "reason": "no embeddings"})
@@ -1222,6 +1224,7 @@ async def compare(payload: ComparePayload):
 class CoveragePayload(BaseModel):
     targets: List[CompareTarget] = Field(..., min_length=1, max_length=12)
     topics: Optional[List[str]] = None  # 생략 시 DEFAULT_TOPICS
+    note_kind: Optional[Literal["전체", "주기", "서술형"]] = "전체"
 
 
 def _load_index(company: str, period: str, doc_type: str = "report") -> Optional[dict]:
@@ -1298,7 +1301,7 @@ async def coverage(payload: CoveragePayload):
                 row[key] = {"coverage_level": "none", "best_score": None,
                             "reason": "not indexed"}
                 continue
-            notes_with_emb = [n for n in _notes_for_comparison(idx, key_fsdiv.get(key, "연결")) if "embedding" in n]
+            notes_with_emb = [n for n in note_filters.filter_notes(_notes_for_comparison(idx, key_fsdiv.get(key, "연결")), payload.note_kind) if "embedding" in n]
             m = match_query_in_notes(q_emb, topic, notes_with_emb)
             if m is None:
                 row[key] = {"coverage_level": "none", "best_score": None,
@@ -1562,7 +1565,8 @@ async def notes_account_refs(company: str, period: str, fs_div: str = "연결", 
 @app.get("/api/notes/rag")
 async def notes_rag_query(q: str, fs_div: str = "연결",
                           companies: Optional[str] = None,
-                          period: Optional[str] = None, top_k: int = 5):
+                          period: Optional[str] = None, top_k: int = 5,
+                          note_kind: str = "전체"):
     q = (q or "").strip()
     if not q:
         raise HTTPException(400, "질의가 비어 있습니다.")
@@ -1580,7 +1584,7 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
 
     try:
         q_emb = (await make_embedding(q)).tolist()
-        sources = notes_rag.retrieve(q_emb, cells, fs_div=fs_div, top_k=top_k)
+        sources = notes_rag.retrieve(q_emb, cells, fs_div=fs_div, top_k=top_k, note_kind=note_kind)
         for s in sources:
             s["text"] = notes_rag.extract_note_text(
                 s["company"], s["period"], s.get("page_start"), s.get("page_end"))
