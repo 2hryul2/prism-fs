@@ -66,3 +66,34 @@ def test_endpoint_answer_requires_sources_live():
     assert "sources" in d                       # 항상 sources 키 존재
     if d.get("answer"):
         assert len(d["sources"]) > 0            # 인용 없는 생성 금지
+
+
+# ---- §5.3 비교 메모 초안 인용 강제 ----
+def test_compare_prompt_injects_citations_and_no_number_rule():
+    srcs = [{"company": "신한", "period": "2026Q1", "fs_div": "연결", "note_no": 8, "page_start": 175, "text": "공정가치 정책..."},
+            {"company": "KB", "period": "2026Q1", "fs_div": "연결", "note_no": 22, "page_start": 287, "text": "공정가치 측정..."}]
+    p = notes_rag.build_compare_prompt("공정가치", srcs)
+    assert "[출처: 신한 2026Q1 연결 주석8 p175]" in p
+    assert "[출처: KB 2026Q1 연결 주석22 p287]" in p
+    assert "생성하지" in p  # 숫자 생성 금지 지시
+
+
+def test_compare_memo_none_without_sources():
+    import asyncio
+    out = asyncio.get_event_loop().run_until_complete(
+        notes_rag.answer_compare_ollama("공정가치", [], "http://localhost:11434", "qwen2.5:7b-instruct"))
+    assert out is None
+
+
+def test_compare_memo_endpoint_contract_live():
+    try:
+        import httpx
+        r = httpx.get("http://localhost:8021/api/notes/compare-memo",
+                      params={"topic": "공정가치", "period": "2026Q1", "fs_div": "연결"}, timeout=300)
+    except Exception:
+        pytest.skip("서버 미가동")
+    assert r.status_code == 200
+    d = r.json()
+    assert "sources" in d
+    if d.get("memo"):
+        assert len(d["sources"]) > 0  # 인용 없는 초안 금지

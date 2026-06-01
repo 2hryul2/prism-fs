@@ -113,6 +113,43 @@ def build_prompt(query: str, sources: List[Dict[str, Any]]) -> str:
     )
 
 
+def build_compare_prompt(topic: str, sources: List[Dict[str, Any]]) -> str:
+    """§5.3 비교 메모 — 회사 간 정책·가정 차이 정리. 출처 강제·숫자 생성 금지."""
+    blocks = []
+    for s in sources:
+        tag = f"[출처: {s['company']} {s['period']} {s.get('fs_div','')} 주석{s.get('note_no')} p{s.get('page_start')}]"
+        blocks.append(f"{tag}\n{(s.get('text','') or '')[:1200]}")  # 비교 컨텍스트 축약(속도)
+    context = "\n\n---\n\n".join(blocks)
+    return (
+        "당신은 4대 금융지주 주석을 비교하는 회계 분석 보조자입니다.\n"
+        f"주제 '{topic}'에 대해 아래 [근거] 주석들을 회사별로 비교하는 초안을 작성하세요. 규칙:\n"
+        "1) 회사 간 **회계정책·추정 가정·공시 범위의 차이**를 중심으로 정리하세요.\n"
+        "2) 근거에 있는 내용만 쓰고, 각 문장 끝에 출처 라벨([출처: ...])을 표기하세요.\n"
+        "3) 금액·숫자를 새로 계산/생성하지 말고, 필요한 경우 근거에 적힌 그대로만 인용하세요.\n"
+        "4) 마지막에 '⚠️ 본 초안은 검토 필요(human-in-the-loop)' 한 줄을 덧붙이세요.\n\n"
+        f"[근거]\n{context}\n\n[비교 초안]\n"
+    )
+
+
+async def answer_compare_ollama(topic: str, sources: List[Dict[str, Any]],
+                                url: str, model: str) -> Optional[str]:
+    """비교 메모 초안 생성(Ollama 옵트인). sources 없으면 None(인용 강제는 호출부)."""
+    if not _HAS_HTTPX or not sources:
+        return None
+    prompt = build_compare_prompt(topic, sources)
+    try:
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            r = await client.post(
+                f"{url}/api/generate",
+                json={"model": model, "prompt": prompt, "stream": False,
+                      "options": {"temperature": 0.0, "num_predict": 800, "top_p": 1.0}},
+            )
+            r.raise_for_status()
+            return (r.json().get("response") or "").strip() or None
+    except Exception:
+        return None
+
+
 async def answer_ollama(query: str, sources: List[Dict[str, Any]],
                         url: str, model: str) -> Optional[str]:
     """Ollama 생성(옵트인). 실패 시 None. (인용 강제는 호출부가 sources 동반 보장)"""

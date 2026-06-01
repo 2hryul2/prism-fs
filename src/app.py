@@ -1583,6 +1583,46 @@ async def notes_topic_map(period: str, fs_div: str = "연결",
     return result
 
 
+@app.get("/api/notes/compare-memo")
+async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
+                             companies: Optional[str] = None, per_company: int = 1):
+    """§5.3 비교 메모 초안(옵트인) — 주제에 대한 4사 주석 정책·가정 차이 AI 초안.
+    인용 강제: 근거(sources) 없으면 초안 생성 안 함. Ollama off=초안 없이 출처만."""
+    topic = (topic or "").strip()
+    if not topic:
+        raise HTTPException(400, "주제가 비어 있습니다.")
+    want = [c for c in (companies or "").split(",") if c] or list(VALID_COMPANIES)
+    try:
+        t_emb = (await make_embedding(topic)).tolist()
+    except Exception as e:
+        raise HTTPException(500, _safe_err(e))
+    # 회사별 주제 최근접 주석 top-N 수집(인용 출처)
+    sources = []
+    for c in want:
+        idx = _load_index(c, period, "report")
+        if not idx:
+            continue
+        cell = [{"company": c, "period": period, "index": idx}]
+        got = notes_rag.retrieve(t_emb, cell, fs_div=fs_div, top_k=per_company)
+        for s in got:
+            s["text"] = notes_rag.extract_note_text(c, period, s.get("page_start"), s.get("page_end"))
+            sources.append(s)
+    if not sources:
+        return {"topic": topic, "period": period, "fs_div": fs_div,
+                "sources": [], "memo": None, "mode": "no_evidence", "ollama": _OLLAMA_AVAILABLE}
+    memo, mode = None, "retrieval_only"
+    if _OLLAMA_AVAILABLE:
+        try:
+            memo = await notes_rag.answer_compare_ollama(topic, sources, OLLAMA_URL, OLLAMA_MODEL)
+            mode = "memo" if memo else "retrieval_only"
+        except Exception as e:
+            print(f"[compare-memo] 생성 실패(무시): {_safe_err(e)}", file=sys.stderr)
+    src_out = [{k: s[k] for k in ("company", "period", "fs_div", "note_no",
+                                   "title", "page_start", "page_end", "score")} for s in sources]
+    return {"topic": topic, "period": period, "fs_div": fs_div,
+            "sources": src_out, "memo": memo, "mode": mode, "ollama": _OLLAMA_AVAILABLE}
+
+
 # ----------------------------------------------------------------------------
 # 주석 RAG (§5.4, 옵트인) — 정성 텍스트 전용. 숫자 무경유·출처 인용 강제·Ollama 옵트인.
 # ----------------------------------------------------------------------------

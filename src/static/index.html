@@ -384,8 +384,16 @@
     <p style="color:#6b7280; font-size:12px; margin-top:2px;">회사마다 번호·제목이 다른 주석을 <strong>canonical 주제</strong>로 분류해 4사를 나란히 정렬(임베딩, AI 무경유). 칩 클릭 시 원본 PDF. <button class="btn btn-secondary" style="padding:4px 12px;font-size:12px;" onclick="loadTopicMap()">주제 매핑 실행</button></p>
     <div class="matrix-wrap"><table class="cov-table" id="topicmap-table"><tr><td class="empty-note">"주제 매핑 실행"을 눌러 4사를 표준 주제로 정렬하세요.</td></tr></table></div>
 
+    <h3 style="font-size:15px; font-weight:700; margin-top:28px;">D. AI 비교 메모 초안 <span style="font-size:11px;color:#5b21b6;background:#ede9fe;border-radius:999px;padding:2px 9px;font-weight:700;">옵트인·인용 강제</span></h3>
+    <p style="color:#6b7280; font-size:12px; margin-top:2px;">선택 주제에 대해 4사 주석의 <strong>회계정책·가정 차이</strong>를 AI가 초안으로 정리(로컬 Ollama 옵트인). 숫자 생성 없음, 문장별 출처 동반, <strong>검토 필요</strong>.</p>
+    <div class="search-bar" style="margin-top:8px;">
+      <select id="memo-topic" style="flex:1;"></select>
+      <button class="btn" style="background:#5b21b6;" onclick="doCompareMemo()">AI 비교 초안</button>
+    </div>
+    <div id="memo-result"></div>
+
     <div class="footer-note">
-      ℹ️ 커버리지·차집합·주제 매핑 분류는 임베딩 코사인 + 규칙으로만 산출되며 AI가 주석/숫자를 생성하지 않습니다. (연결/별도 동일 축끼리 비교)
+      ℹ️ 커버리지·차집합·주제 매핑 분류는 임베딩 코사인 + 규칙으로만 산출되며 AI가 주석/숫자를 생성하지 않습니다. AI 비교 초안(D)은 주석 텍스트 기반·출처 인용 동반이며 담당자 검토가 필요합니다. (연결/별도 동일 축끼리 비교)
     </div>
   </div>
 
@@ -881,6 +889,7 @@
 
   async function reloadInsight() {
     updateInsightSubtitle();
+    populateMemoTopics();
     await Promise.all([loadCoverage(), loadStructureDiff()]);
   }
 
@@ -1037,6 +1046,46 @@
     html += `<tr><th class="topic-col" style="color:#9ca3af;">미분류(임계&lt;${d.topic_min_score})</th>` +
       COMPANIES.map(c => `<td style="color:#9ca3af;">${d.unclassified[c] != null ? d.unclassified[c] + '건' : '—'}</td>`).join("") + `</tr>`;
     table.innerHTML = html;
+  };
+
+  // 비교 메모 주제 셀렉터 채우기(TOPICS 기준)
+  function populateMemoTopics() {
+    const sel = document.getElementById("memo-topic");
+    if (!sel) return;
+    const cur = sel.value;
+    sel.innerHTML = TOPICS.map(t => `<option value="${t}"${t === cur ? ' selected' : ''}>${t}</option>`).join("");
+  }
+
+  // D. AI 비교 메모 초안 (§5.3, 옵트인·인용 강제)
+  window.doCompareMemo = async function() {
+    const topic = (document.getElementById("memo-topic")||{}).value;
+    if (!topic) return toast("주제를 선택하세요.");
+    const out = document.getElementById("memo-result");
+    out.innerHTML = `<div class="info-banner">🤖 ${topic} — 4사 주석 비교 초안 생성 중...(Ollama, 최대 2분)</div>`;
+    const qs = new URLSearchParams({ topic, period: INSIGHT_PERIOD, fs_div: INSIGHT_FSDIV, companies: COMPANIES.join(",") });
+    let d;
+    try { d = await fetch(`${API}/api/notes/compare-memo?${qs}`).then(r => r.json()); }
+    catch (e) { out.innerHTML = `<div class="warn-banner">실패: ${e}</div>`; return; }
+    let h = "";
+    if (d.memo) {
+      h += `<div style="background:#f5f3ff;border:1px solid #ddd6fe;border-left:4px solid #7c3aed;border-radius:8px;padding:12px 14px;margin-bottom:10px;">
+        <div style="font-size:11px;font-weight:700;color:#5b21b6;margin-bottom:6px;">🤖 AI 비교 초안 — ${topic} (검토 필요)</div>
+        <div style="font-size:13px;color:#1f2937;white-space:pre-wrap;line-height:1.6;">${d.memo.replace(/</g,'&lt;')}</div></div>`;
+    } else if (d.mode === "retrieval_only") {
+      h += `<div class="info-banner">ℹ️ LLM 비활성(Ollama 미가동) — 출처만 표시합니다.</div>`;
+    } else if (d.mode === "no_evidence") {
+      h += `<div class="warn-banner">근거 주석을 찾지 못했습니다.</div>`;
+    }
+    if ((d.sources || []).length) {
+      h += `<div style="font-size:12px;color:#6b7280;margin:6px 0 4px;">📎 출처(클릭→PDF):</div><div style="display:flex;gap:6px;flex-wrap:wrap;">`;
+      h += d.sources.map(s => {
+        const url = `${API}/api/pdf?company=${encodeURIComponent(s.company)}&period=${encodeURIComponent(s.period)}&doc_type=report#page=${s.page_start}`;
+        return `<span class="chip" style="cursor:pointer;background:#ede9fe;color:#5b21b6;" title="${(s.title||'').replace(/"/g,'')}"
+          onclick="window.open('${url}','_blank','width=1000,height=1200,scrollbars=yes,resizable=yes')">${s.company} 주석${s.note_no} p${s.page_start} · ${(s.score*100).toFixed(0)}%</span>`;
+      }).join("");
+      h += `</div>`;
+    }
+    out.innerHTML = h;
   };
 
   // ----- Wordmap (영문 변환 탭) -----
