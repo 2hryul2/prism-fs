@@ -19,3 +19,7 @@ _*.json
 docs_cache/
 *.pkl
 .pytest_cache/
+
+# 로컬 전용 (머신별 권한·핸드오프)
+.claude/settings.local.json
+handoff/

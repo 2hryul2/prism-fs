@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "prism-fs",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "uvicorn", "app:app", "--app-dir", "D:/SOURCE/prism-fs/src", "--port", "8021"],
+      "port": 8021
+    }
+  ]
+}
