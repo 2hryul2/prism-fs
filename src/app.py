@@ -51,6 +51,7 @@ import fs_compare  # 재무제표 결정론 비교 엔진(증감/연결vs별도/
 import notes_rag  # 주석 RAG(§5.4, 옵트인) — 정성 텍스트 전용, 숫자 무경유·인용 강제
 import note_filters  # 주석 종류(주기/서술형) 결정론 필터
 import note_topics  # §5.2 표준 주제 매핑(임베딩 분류, AI 무경유)
+import safety  # 시크릿 마스킹·provenance 중앙화
 
 # ----------------------------------------------------------------------------
 # 설정
@@ -926,15 +927,8 @@ def _period_to_year_reprt(period: str):
 
 
 def _safe_err(e: Exception) -> str:
-    """예외 메시지를 사용자 노출용으로 정제 — DART/OpenAI 키는 반드시 마스킹."""
-    msg = f"{type(e).__name__}: {e}"
-    msg = re.sub(r"(crtfc_key=)[^&\s]+", r"\1****", msg)
-    msg = re.sub(r"(OPENAI_API_KEY[=:]\s*)\S+", r"\1****", msg)
-    # OpenAI 키 표준 접두 'sk-' 직접 마스킹(예외 메시지에 키가 raw 로 노출될 때 대비)
-    msg = re.sub(r"sk-[A-Za-z0-9_\-]{10,}", "sk-****", msg)
-    # Authorization Bearer
-    msg = re.sub(r"(Authorization:\s*Bearer\s+)\S+", r"\1****", msg, flags=re.IGNORECASE)
-    return msg[:300]
+    """예외 메시지를 사용자 노출용으로 정제 — 마스킹은 safety 모듈로 중앙화."""
+    return safety.safe_err(e)
 
 
 def _collect_company_blocking(company: str, year: int, reprt: str,

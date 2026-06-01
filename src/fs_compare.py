@@ -17,6 +17,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import safety  # provenance 표준 형태 중앙화
+
 BASE_DIR = Path(__file__).resolve().parent
 LIBRARY_ROOT = BASE_DIR / "storage" / "library"
 
@@ -126,17 +128,16 @@ def delta(company: str, period: str, fs_div: str = "연결") -> Dict[str, Any]:
             dv = cur - base
             row["delta"] = str(dv)
             row["pct"] = "N/A" if base == 0 else round(dv / abs(base) * 100, 2)
-            row["provenance"] = {
-                "formula": f"Δ = 당기 − {col_ko} ; 증감률 = Δ / |{col_ko}| × 100",
-                "inputs": [
+            row["provenance"] = safety.provenance(
+                formula=f"Δ = 당기 − {col_ko} ; 증감률 = Δ / |{col_ko}| × 100",
+                inputs=[
                     {"label": "당기(thstrm)", "raw": a.get("thstrm_amount"),
                      "account_id": a.get("account_id"), "period": period, "fs_div": fs_div},
                     {"label": f"{col_ko}({col})", "raw": base_raw,
                      "account_id": a.get("account_id"), "period": period, "fs_div": fs_div},
                 ],
-                "result": f"Δ={dv} , 증감률={row['pct']}",
-                "engine": "deterministic",
-            }
+                result=f"Δ={dv} , 증감률={row['pct']}",
+            )
         rows.append(row)
     return {"company": company, "period": period, "fs_div": fs_div, "rows": rows}
 
@@ -157,14 +158,14 @@ def consolidated_vs_separate(company: str, period: str) -> Dict[str, Any]:
         if ca and oa and cv is not None and ov is not None:
             dv = cv - ov
             row["diff"] = str(dv)
-            row["provenance"] = {
-                "formula": "차이 = 연결(CFS) − 별도(OFS)  [자회사효과 추정·연결조정 미반영]",
-                "inputs": [
+            row["provenance"] = safety.provenance(
+                formula="차이 = 연결(CFS) − 별도(OFS)  [자회사효과 추정·연결조정 미반영]",
+                inputs=[
                     {"label": "연결 당기", "raw": row["cfs"], "account_id": aid, "period": period, "fs_div": "연결"},
                     {"label": "별도 당기", "raw": row["ofs"], "account_id": aid, "period": period, "fs_div": "별도"},
                 ],
-                "result": str(dv), "engine": "deterministic",
-            }
+                result=str(dv),
+            )
         else:
             row["diff"] = None
             row["flag"] = "대응 없음"  # 한쪽만 존재 → 차감 안 함
@@ -217,16 +218,16 @@ def ratio(company: str, period: str, fs_div: str = "연결") -> Dict[str, Any]:
         val = round(nv / dv * 100, 2)
         return {
             "label": label, "value": val,
-            "provenance": {
-                "formula": f"{label} = {num_ko} ÷ {den_ko} × 100",
-                "inputs": [
+            "provenance": safety.provenance(
+                formula=f"{label} = {num_ko} ÷ {den_ko} × 100",
+                inputs=[
                     {"label": num_ko, "raw": num.get("thstrm_amount"),
                      "account_id": num.get("account_id"), "period": period, "fs_div": fs_div},
                     {"label": den_ko, "raw": den.get("thstrm_amount"),
                      "account_id": den.get("account_id"), "period": period, "fs_div": fs_div},
                 ],
-                "result": f"{val}%", "engine": "deterministic",
-            },
+                result=f"{val}%",
+            ),
         }
 
     return {
@@ -272,14 +273,14 @@ def timeseries(company: str, account_id: str, fs_div: str = "연결") -> Dict[st
             dv = cur - prev
             row["delta"] = str(dv)
             row["pct"] = "N/A" if prev == 0 else round(dv / abs(prev) * 100, 2)
-            row["provenance"] = {
-                "formula": f"Δ = {pt['period']} − {points[i-1]['period']} (당기 원문)",
-                "inputs": [
+            row["provenance"] = safety.provenance(
+                formula=f"Δ = {pt['period']} − {points[i-1]['period']} (당기 원문)",
+                inputs=[
                     {"label": pt["period"], "raw": pt["value"], "account_id": account_id, "period": pt["period"], "fs_div": fs_div},
                     {"label": points[i-1]["period"], "raw": points[i-1]["value"], "account_id": account_id, "period": points[i-1]["period"], "fs_div": fs_div},
                 ],
-                "result": f"Δ={dv} , 증감률={row['pct']}", "engine": "deterministic",
-            }
+                result=f"Δ={dv} , 증감률={row['pct']}",
+            )
         rows.append(row)
     return {"company": company, "account_id": account_id, "account_nm": acc_nm,
             "fs_div": fs_div, "rows": rows}
@@ -336,14 +337,14 @@ def consolidated_subtotals(company: str, period: str) -> Dict[str, Any]:
             dv = cv - ov
             row["diff"] = str(dv)
             row["pct_of_cfs"] = "N/A" if cv == 0 else round(dv / abs(cv) * 100, 1)  # 자회사효과 비중(연결 대비)
-            row["provenance"] = {
-                "formula": "자회사효과(추정) = 연결 − 별도 ; 비중 = 차이 / |연결| × 100",
-                "inputs": [
+            row["provenance"] = safety.provenance(
+                formula="자회사효과(추정) = 연결 − 별도 ; 비중 = 차이 / |연결| × 100",
+                inputs=[
                     {"label": "연결", "raw": row["cfs"], "account_id": aid, "period": period, "fs_div": "연결"},
                     {"label": "별도", "raw": row["ofs"], "account_id": aid, "period": period, "fs_div": "별도"},
                 ],
-                "result": f"차이={dv} , 비중={row['pct_of_cfs']}%", "engine": "deterministic",
-            }
+                result=f"차이={dv} , 비중={row['pct_of_cfs']}%",
+            )
         else:
             row["diff"] = None
             row["flag"] = "대응 없음"
