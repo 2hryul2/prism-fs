@@ -154,6 +154,7 @@
     <button class="tab" onclick="showTab('upload')">⬆️ PDF 업로드</button>
     <button class="tab" onclick="showTab('compare')">🔍 비교 조회</button>
     <button class="tab" onclick="showTab('fs')">📈 재무제표 비교</button>
+    <button class="tab" onclick="showTab('coverage')">🧭 커버리지·공시갭</button>
   </div>
 
   <!-- Tab: Library -->
@@ -321,6 +322,53 @@
     </div>
   </div>
 
+  <!-- Tab: 커버리지·공시갭 (신한 중심) -->
+  <div id="tab-coverage" class="panel hidden">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h2 style="font-size:17px; font-weight:700;">🧭 커버리지·공시갭 <span style="font-size:12px;color:#3730a3;background:#e0e7ff;border-radius:999px;padding:2px 9px;font-weight:700;">신한 중심</span></h2>
+        <p id="insight-subtitle" style="color:#6b7280; font-size:13px; margin-top:4px;">4사 기준. 주석 "구조"만 비교하며 숫자·단위는 재구성/환산하지 않습니다.</p>
+      </div>
+      <div style="display:flex; gap:10px;">
+        <div class="field" style="min-width:120px;">
+          <label style="font-size:12px;color:#6b7280;font-weight:600;">분석 기간</label>
+          <select id="insight-period" onchange="onInsightPeriodChange()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;"></select>
+        </div>
+        <div class="field" style="min-width:100px;">
+          <label style="font-size:12px;color:#6b7280;font-weight:600;">연결/별도</label>
+          <select id="cov-fsdiv" onchange="onInsightFsdivChange()" style="padding:8px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;">
+            <option value="연결">연결</option><option value="별도">별도</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div id="insight-warn"></div>
+
+    <h3 style="font-size:15px; font-weight:700; margin-top:20px;">A. 횡단 커버리지 매트릭스</h3>
+    <p style="color:#6b7280; font-size:12px; margin-top:2px;">주제 × 회사 → 전용 주석 / 통합·관련 / 미발견. <strong>전용·관련</strong> 셀을 <strong>더블클릭</strong>하면 비교 탭에서 4사 전체를 해당 주제로 검색합니다.</p>
+    <div class="topic-editor">
+      <input type="text" id="topic-input" placeholder="주제 추가 (예: 무형자산)" onkeydown="if(event.key==='Enter')addTopic()">
+      <button class="btn btn-secondary" style="padding:8px 14px;" onclick="addTopic()">＋ 주제 추가</button>
+      <button class="btn btn-secondary" style="padding:8px 14px;" onclick="resetTopics()">기본값 복원</button>
+      <button class="btn" style="padding:8px 14px;" onclick="loadCoverage()">매트릭스 새로고침</button>
+    </div>
+    <div class="cov-legend">
+      <span><i class="cov-swatch" style="background:#0046ff;"></i> 전용 주석</span>
+      <span><i class="cov-swatch" style="background:#e0e7ff;"></i> 통합·관련</span>
+      <span><i class="cov-swatch" style="background:#f9fafb; border:1px solid #e5e7eb;"></i> 미발견</span>
+    </div>
+    <div class="matrix-wrap"><table class="cov-table" id="cov-table"></table></div>
+
+    <h3 style="font-size:15px; font-weight:700; margin-top:28px;">B. 신한 vs 동종 주석 차집합</h3>
+    <p style="color:#6b7280; font-size:12px; margin-top:2px;">base=신한, peers=KB·하나·우리. 의미(임베딩) 매칭 임계값 <span id="diff-thr">0.62</span> 기준. 제목이 달라도 의미가 같으면 대응으로 간주합니다.</p>
+    <div class="diff-cols" id="diff-cols"></div>
+
+    <div class="footer-note">
+      ℹ️ 커버리지·차집합 분류는 임베딩 코사인 + 규칙으로만 산출되며 AI가 주석/숫자를 생성하지 않습니다. (연결/별도 동일 축끼리 비교)
+    </div>
+  </div>
+
 </div>
 
 <div id="fs-pop" style="position:fixed; z-index:50; max-width:360px; background:#111827; color:#f3f4f6; border-radius:8px; padding:11px 13px; font-size:12px; line-height:1.6; box-shadow:0 6px 24px rgba(0,0,0,.3); display:none;">
@@ -368,15 +416,16 @@
   // ----- Tabs -----
   function showTab(name) {
     document.querySelectorAll(".tab").forEach((t, i) => {
-      t.classList.toggle("active", t.textContent.includes({library:"라이브러리", upload:"업로드", compare:"비교", fs:"재무제표"}[name]));
+      t.classList.toggle("active", t.textContent.includes({library:"라이브러리", upload:"업로드", compare:"비교", fs:"재무제표", coverage:"커버리지"}[name]));
     });
-    ["library","upload","compare","fs"].forEach(n => {
+    ["library","upload","compare","fs","coverage"].forEach(n => {
       const el = document.getElementById(`tab-${n}`);
       if (el) el.classList.toggle("hidden", n !== name);
     });
     if (name === "library") loadLibrary();
     if (name === "compare") renderTargetsBar();
     if (name === "fs") loadFsTab();
+    if (name === "coverage") loadInsight();
   }
 
   // ----- Library -----
@@ -775,13 +824,18 @@
   // ----- Insight (A 커버리지 / B 차집합) -----
   // 분석 기간: 직전 실행 기간(localStorage)을 디폴트로, 없으면 2026Q1.
   let INSIGHT_PERIOD = localStorage.getItem("insightPeriod") || "2026Q1";
+  let INSIGHT_FSDIV = "연결";  // 커버리지·공시갭 연결/별도 축
   const DEFAULT_TOPICS = ["공정가치","대손충당금","금융상품 위험","영업권","리스","확정급여","법인세","우발부채 및 약정","특수관계자 거래","자본"];
   let TOPICS = [...DEFAULT_TOPICS];
   const LEVEL_LABEL = { dedicated: "전용", related: "통합·관련", none: "미발견" };
 
   function insightTargets() {
-    return COMPANIES.map(c => ({ company: c, period: INSIGHT_PERIOD }));
+    return COMPANIES.map(c => ({ company: c, period: INSIGHT_PERIOD, doc_type: "report", fs_div: INSIGHT_FSDIV }));
   }
+  window.onInsightFsdivChange = function() {
+    INSIGHT_FSDIV = document.getElementById("cov-fsdiv").value;
+    reloadInsight();
+  };
 
   // 분석 기간 드롭다운 채우기 — 라이브러리 보유 기간 + 현재 선택 기간.
   function populateInsightPeriods() {
@@ -879,9 +933,9 @@
     SELECTED = new Set();
     for (const c of COMPANIES) {
       const entry = LIBRARY.entries.find(e => e.company === c && e.period === INSIGHT_PERIOD);
-      if (docIndexed(entry, "report")) SELECTED.add(selKey(c, INSIGHT_PERIOD, "report"));
+      if (fsIndexed(entry, INSIGHT_FSDIV)) SELECTED.add(selKey(c, INSIGHT_PERIOD, INSIGHT_FSDIV));
     }
-    if (SELECTED.size === 0) return toast(`${INSIGHT_PERIOD}에 인덱싱된 분기보고서가 없습니다.`);
+    if (SELECTED.size === 0) return toast(`${INSIGHT_PERIOD} ${INSIGHT_FSDIV} 인덱싱된 주석이 없습니다.`);
     showTab("compare");
     renderTargetsBar();
     document.getElementById("query").value = topic;
@@ -892,11 +946,11 @@
   window.loadStructureDiff = async function() {
     const cols = document.getElementById("diff-cols");
     cols.innerHTML = `<div class="empty-note">불러오는 중...</div>`;
-    const peers = ["KB","하나","우리"].map(c => ({ company: c, period: INSIGHT_PERIOD }));
+    const peers = ["KB","하나","우리"].map(c => ({ company: c, period: INSIGHT_PERIOD, doc_type: "report", fs_div: INSIGHT_FSDIV }));
     const res = await fetch(`${API}/api/structure-diff`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ base: { company: "신한", period: INSIGHT_PERIOD }, peers }),
+      body: JSON.stringify({ base: { company: "신한", period: INSIGHT_PERIOD, doc_type: "report", fs_div: INSIGHT_FSDIV }, peers }),
     });
     if (!res.ok) {
       // base(신한) 또는 peer 분기보고서가 이 기간에 인덱싱되지 않은 경우 — 단정 대신 안내.
