@@ -623,26 +623,58 @@ def _fallback_keyword_notes(doc):
     return _build_notes_from_sequence(candidates, doc.page_count), notes_start_page + 1
 
 
-def _extract_full_report_notes(candidates: List[Dict[str, Any]], total_pages: int):
-    """full_report 추출 — (연결)/(별도) 접미 앵커.
+# 별도(개별)재무제표 주석 섹션 헤더 — 분기보고서에서 연결 주석 뒤에 위치.
+# "(별도)" 접미가 없는 회사가 있어(예: 신한·우리) 섹션 헤더로 별도 영역을 앵커링한다.
+_SEPARATE_SECTION_RE = re.compile(r"(별도재무제표|재무제표에 대한 주석|재무제표\s*주석)")
 
-    접미가 있는 후보만 fs_div 그룹으로 분리(접미 없는 건 비주석 확률 높아 제외).
-    각 그룹에서 기존 단조 증가 런을 적용해 진짜 주석 시퀀스만 채택하고, 그룹의
-    fs_div 를 note 에 강제 태깅한다. 연결+별도 합쳐 반환.
+
+def _find_separate_section_page(doc, after_page: int) -> Optional[int]:
+    """연결 주석 영역(after_page) 이후 첫 '별도재무제표/재무제표 주석' 섹션 페이지(1-base).
+
+    after_page 이후부터 스캔하므로 앞쪽 '연결재무제표 주석' 은 자연히 제외된다.
+    """
+    for pno in range(max(after_page, 0), doc.page_count):
+        if _SEPARATE_SECTION_RE.search(doc[pno].get_text()):
+            return pno + 1
+    return None
+
+
+def _extract_full_report_notes(candidates: List[Dict[str, Any]], total_pages: int, doc=None):
+    """full_report 추출 — 연결은 (연결) 접미 앵커, 별도는 접미 또는 섹션 앵커.
+
+    1) 연결: (연결) 접미 후보 그룹 → 단조 런.
+    2) 별도: (별도) 접미 그룹이 있으면 그것으로, 없으면(접미 미사용 회사)
+       연결 영역 이후 '재무제표 주석' 섹션 페이지부터의 무접미 후보로 단조 런(1.. 시작).
+    각 그룹 fs_div 를 note 에 강제 태깅. 연결+별도 합쳐 반환.
 
     Returns: (notes, scan_start) — scan_start 는 단위 탐지 시작 페이지.
     """
     notes: List[Dict[str, Any]] = []
     scan_starts: List[int] = []
-    for div in ("연결", "별도"):
-        group = [c for c in candidates if c.get("fs_div") == div]
-        if not group:
-            continue
-        sequence = _select_note_sequence(group, gap_tolerance=FULL_REPORT_GAP_TOLERANCE)
-        if sequence is None:
-            continue
-        notes.extend(_build_notes_from_sequence(sequence, total_pages, fs_div=div))
-        scan_starts.append(sequence[0]["page"])
+
+    # 1) 연결 (접미 앵커)
+    conn_last_page = 0
+    conn_group = [c for c in candidates if c.get("fs_div") == "연결"]
+    if conn_group:
+        seq = _select_note_sequence(conn_group, gap_tolerance=FULL_REPORT_GAP_TOLERANCE)
+        if seq is not None:
+            notes.extend(_build_notes_from_sequence(seq, total_pages, fs_div="연결"))
+            scan_starts.append(seq[0]["page"])
+            conn_last_page = max(c["page"] for c in seq)
+
+    # 2) 별도 — 접미 그룹 우선, 없으면 섹션 앵커 폴백(접미 미사용 회사)
+    sep_group = [c for c in candidates if c.get("fs_div") == "별도"]
+    sep_seq = _select_note_sequence(sep_group, gap_tolerance=FULL_REPORT_GAP_TOLERANCE) if sep_group else None
+    if sep_seq is None and doc is not None and conn_last_page:
+        sep_start = _find_separate_section_page(doc, conn_last_page)
+        if sep_start:
+            sep_cands = [c for c in candidates
+                         if c.get("fs_div") is None and c["page"] >= sep_start]
+            sep_seq = _select_note_sequence(sep_cands, gap_tolerance=FULL_REPORT_GAP_TOLERANCE)
+    if sep_seq is not None:
+        notes.extend(_build_notes_from_sequence(sep_seq, total_pages, fs_div="별도"))
+        scan_starts.append(sep_seq[0]["page"])
+
     scan_start = min(scan_starts) if scan_starts else 1
     return notes, scan_start
 
@@ -667,7 +699,7 @@ def extract_notes_heuristic(pdf_path: Path):
         if suffix_count >= FULL_REPORT_SUFFIX_MIN:
             # 전체 분기/사업보고서 — 접미 앵커로 연결/별도 분리 추출
             source_type = "full_report"
-            notes, scan_start = _extract_full_report_notes(candidates, doc.page_count)
+            notes, scan_start = _extract_full_report_notes(candidates, doc.page_count, doc)
         else:
             # 슬림 검토보고서 — 현행 단조런 유지
             source_type = "slim"
