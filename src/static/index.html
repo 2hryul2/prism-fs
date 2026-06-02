@@ -174,6 +174,33 @@
       <button class="preset-btn" onclick="presetSameQuarterAll()">동일 분기·모든 회사</button>
       <button class="preset-btn" onclick="presetTimeSeries('신한')">신한 전 분기 추이</button>
       <button class="preset-btn" onclick="clearSelection()">선택 초기화</button>
+      <button class="preset-btn" id="add-toggle" onclick="toggleAddPanel()" style="margin-left:auto; background:#ecfdf5; border-color:#6ee7b7; color:#047857; font-weight:700;">➕ 분기/연간 자료 추가</button>
+    </div>
+
+    <!-- 인라인 자료 추가 패널(DART 수집) -->
+    <div id="add-panel" class="hidden" style="border:1px solid #6ee7b7; background:#f0fdf4; border-radius:10px; padding:14px; margin-bottom:14px;">
+      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+        <div class="field" style="min-width:140px;">
+          <label style="font-size:12px; color:#065f46;">회사</label>
+          <select id="add-company"><option value="ALL">📦 4사 일괄</option><option value="신한">신한금융지주</option><option value="KB">KB금융지주</option><option value="하나">하나금융지주</option><option value="우리">우리금융지주</option></select>
+        </div>
+        <div class="field" style="min-width:100px;">
+          <label style="font-size:12px; color:#065f46;">연도</label>
+          <select id="add-year"></select>
+        </div>
+        <div class="field" style="min-width:150px;">
+          <label style="font-size:12px; color:#065f46;">보고서 유형</label>
+          <select id="add-type"></select>
+        </div>
+        <div class="field">
+          <label style="font-size:12px; color:#065f46;">본문 PDF</label>
+          <label style="font-size:13px; display:flex; align-items:center; gap:6px; padding:9px 0;"><input type="checkbox" id="add-report" checked style="width:auto;"> 분기보고서 본문 포함</label>
+        </div>
+        <button class="btn" id="add-btn" onclick="doAddCollect()" style="background:#047857;">DART 수집</button>
+        <button class="preset-btn" onclick="addEmptyColumn()" title="데이터 없이 매트릭스에 빈 컬럼만 추가(셀 클릭으로 개별 수집)">빈 컬럼만 추가</button>
+      </div>
+      <p style="font-size:11px; color:#6b7280; margin-top:8px;">DART_API_KEY(.env) 필요 · 폐쇄망 데모 PC는 보유 자료 사용. 수집 후 자동 인덱싱(본문 청크). 매트릭스 빈 셀을 클릭하면 해당 셀을 바로 수집합니다.</p>
+      <div id="add-status" style="margin-top:8px;"></div>
     </div>
 
     <div class="selected-bar" id="selected-bar">
@@ -205,16 +232,12 @@
         </select>
       </div>
       <div class="field">
-        <label>연도-분기</label>
-        <select id="up-period">
-          <option value="2025Q3">2025Q3</option>
-          <option value="2025Q2">2025Q2</option>
-          <option value="2025Q1">2025Q1</option>
-          <option value="2024FY">2024FY (사업)</option>
-          <option value="2024Q3">2024Q3</option>
-          <option value="2024Q2">2024Q2</option>
-          <option value="2024Q1">2024Q1</option>
-        </select>
+        <label>연도</label>
+        <select id="up-year"></select>
+      </div>
+      <div class="field">
+        <label>보고서 유형</label>
+        <select id="up-type"></select>
       </div>
       <div class="field">
         <label>보고서 PDF (분기/사업)</label>
@@ -241,16 +264,12 @@
         </select>
       </div>
       <div class="field">
-        <label>연도-분기</label>
-        <select id="dc-period">
-          <option value="2026Q1">2026Q1</option>
-          <option value="2025FY">2025FY (사업)</option>
-          <option value="2025Q3">2025Q3</option>
-          <option value="2025Q2">2025Q2 (반기)</option>
-          <option value="2025Q1">2025Q1</option>
-          <option value="2024FY">2024FY (사업)</option>
-          <option value="2024Q3">2024Q3</option>
-        </select>
+        <label>연도</label>
+        <select id="dc-year"></select>
+      </div>
+      <div class="field">
+        <label>보고서 유형</label>
+        <select id="dc-type"></select>
       </div>
       <div class="field">
         <label>본문 PDF</label>
@@ -420,6 +439,41 @@
   const API = "";
   const COMPANIES = ["신한", "KB", "하나", "우리"];
   let LIBRARY = { matrix: {}, available_periods: [], entries: [] };
+
+  // ----- 기간(분기/연간) 헬퍼 — 하드코딩 드롭다운 제거, 임의 연도·유형 추가 가능 -----
+  const PERIOD_TYPES = [
+    { v: "Q1", ko: "1분기" }, { v: "Q2", ko: "반기" },
+    { v: "Q3", ko: "3분기" }, { v: "FY", ko: "사업보고서(연간)" },
+  ];
+  const _PORDER = { Q1: 1, Q2: 2, Q3: 3, Q4: 4, FY: 5 };
+  function periodYears() {  // 현재연도 ~ −5 (브라우저 시각 기준)
+    const y = new Date().getFullYear();
+    return Array.from({ length: 7 }, (_, i) => y - i);  // 미래분기 대비 +당해
+  }
+  function composePeriod(year, type) { return `${year}${type}`; }
+  function periodSortKey(p) {  // (연도, 분기순) — FY 는 Q3 뒤(연말)
+    const y = parseInt((p || "").slice(0, 4), 10);
+    return [isNaN(y) ? 9999 : y, _PORDER[(p || "").slice(4)] || 9];
+  }
+  function periodLabel(p) {  // 매트릭스 헤더 라벨 — FY 는 (연간) 표기
+    return (p || "").endsWith("FY") ? `${p.slice(0, 4)}FY (연간)` : p;
+  }
+  // 사용자가 추가한 빈 기간 컬럼(데이터 없이 노출 → 셀 클릭 수집). localStorage 보존.
+  let EXTRA_PERIODS = new Set(JSON.parse(localStorage.getItem("extraPeriods") || "[]"));
+  function saveExtraPeriods() { localStorage.setItem("extraPeriods", JSON.stringify([...EXTRA_PERIODS])); }
+
+  function fillYearSelect(id) {
+    const el = document.getElementById(id); if (!el) return;
+    el.innerHTML = periodYears().map(y => `<option value="${y}">${y}</option>`).join("");
+  }
+  function fillTypeSelect(id, dflt) {
+    const el = document.getElementById(id); if (!el) return;
+    el.innerHTML = PERIOD_TYPES.map(t => `<option value="${t.v}"${t.v === dflt ? " selected" : ""}>${t.ko} (${t.v})</option>`).join("");
+  }
+  function populatePeriodSelects() {
+    ["up-year", "dc-year", "add-year"].forEach(fillYearSelect);
+    fillTypeSelect("up-type", "Q3"); fillTypeSelect("dc-type", "Q3"); fillTypeSelect("add-type", "Q3");
+  }
   let SELECTED = new Set();      // "회사/기간#연결|별도" (fs_div 1급 축)
   let INDEX_STATUS_MAP = {};     // "회사/기간/report" -> status (내부 소스는 항상 분기보고서)
 
@@ -481,13 +535,16 @@
   }
 
   function renderMatrix() {
-    const periods = LIBRARY.available_periods.length > 0
+    // 보유 기간 ∪ 사용자가 추가한 빈 컬럼 → 기간순(FY 는 연말) 정렬
+    const base = LIBRARY.available_periods.length > 0
       ? LIBRARY.available_periods
-      : ["2024Q3", "2024Q4", "2025Q1", "2025Q2", "2025Q3"];
+      : ["2025Q2", "2025Q3", "2026Q1"];
+    const periods = [...new Set([...base, ...EXTRA_PERIODS])].sort(
+      (a, b) => { const ka = periodSortKey(a), kb = periodSortKey(b); return ka[0] - kb[0] || ka[1] - kb[1]; });
 
     const table = document.getElementById("matrix-table");
-    let html = `<tr><th class="company-col">회사 \\ 분기</th>` +
-      periods.map(p => `<th>${p}</th>`).join("") + `</tr>`;
+    let html = `<tr><th class="company-col">회사 \\ 기간</th>` +
+      periods.map(p => `<th${p.endsWith("FY") ? ' style="background:#fffbeb;"' : ''}>${periodLabel(p)}</th>`).join("") + `</tr>`;
 
     for (const c of COMPANIES) {
       html += `<tr><th class="company-col">${c}</th>`;
@@ -534,11 +591,15 @@
     table.innerHTML = html;
   }
 
-  // 빈 셀 클릭 → 업로드 탭으로 이동
+  // 빈 셀 클릭 → 라이브러리 인라인 패널을 해당 회사·기간으로 프리필+펼침(1클릭 수집)
   window.onEmptyCellClick = function(company, period) {
-    document.getElementById("up-company").value = company;
-    document.getElementById("up-period").value = period;
-    showTab("upload");
+    openAddPanel();
+    const yr = period.slice(0, 4), tp = period.slice(4);
+    const setSel = (id, v) => { const el = document.getElementById(id); if (el && [...el.options].some(o => o.value === v)) el.value = v; };
+    setSel("add-company", company); setSel("add-year", yr); setSel("add-type", tp);
+    EXTRA_PERIODS.add(period); saveExtraPeriods();
+    document.getElementById("add-status").innerHTML = `<div class="info-banner">${company}·${periodLabel(period)} 선택됨 — <b>[DART 수집]</b>을 누르면 이 셀을 수집합니다. (수동 업로드는 'PDF 업로드' 탭)</div>`;
+    document.getElementById("add-panel").scrollIntoView({ behavior: "smooth", block: "center" });
   };
 
   // 연결/별도 pill 클릭 → 해당 (회사/기간/fs_div) 선택 토글
@@ -652,7 +713,7 @@
   // ----- Upload -----
   window.doUpload = async function() {
     const company = document.getElementById("up-company").value;
-    const period = document.getElementById("up-period").value;
+    const period = composePeriod(document.getElementById("up-year").value, document.getElementById("up-type").value);
     const docType = "report";  // 내부 소스는 항상 분기보고서(연결+별도 주석 포함)
     const file = document.getElementById("up-file").files[0];
     if (!file) return toast("PDF 파일을 선택하세요.");
@@ -700,63 +761,77 @@
     }, 800);
   }
 
-  // ----- DART 자동 수집 -----
+  // ----- DART 자동 수집 (공용 코어 — 업로드 탭·라이브러리 패널 공유) -----
+  function startCollect(company, period, includeReport, statusEl) {
+    statusEl.innerHTML = `<div class="info-banner">DART에서 ${company}·${periodLabel(period)} 수집 시작...</div>`;
+    return fetch(`${API}/api/library/collect`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company, period, include_report_pdf: includeReport }),
+    }).then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { statusEl.innerHTML = `<div class="warn-banner">${company} 수집 시작 실패: ${data.detail || "오류"}</div>`; return false; }
+      return pollCollectP(company, period, statusEl);
+    }).catch(e => { statusEl.innerHTML = `<div class="warn-banner">수집 요청 실패: ${e}</div>`; return false; });
+  }
+
+  function pollCollectP(company, period, statusEl) {
+    return new Promise(resolve => {
+      const key = `${company}/${period}`;
+      const interval = setInterval(async () => {
+        let res; try { res = await fetch(`${API}/api/library/collect/status`).then(r => r.json()); } catch (e) { return; }
+        const item = (res.items || []).find(i => i.key === key);
+        if (!item) return;
+        if (item.status === "done") {
+          clearInterval(interval);
+          const rep = item.report_collected ? "분기보고서 ✓" : "분기보고서 –";
+          const rev = item.review_collected ? "검토 ✓" : "검토 –";
+          const idx = (item.indexed || []).length ? ` · 인덱싱: ${item.indexed.join(", ")}` : "";
+          statusEl.innerHTML = `<div class="info-banner">✓ ${company}·${periodLabel(period)} 수집 완료 — ${rep} / ${rev}${idx}</div>`;
+          loadLibrary(); resolve(true);
+        } else if (item.status === "error") {
+          clearInterval(interval);
+          statusEl.innerHTML = `<div class="warn-banner">${company} 수집 실패: ${item.error}</div>`; resolve(false);
+        } else {
+          const stage = (item.stage === "indexing" || item.status === "indexing") ? "인덱싱 중" : "수집 중";
+          statusEl.innerHTML = `<div class="info-banner">${company}·${periodLabel(period)} ${stage}...</div>`;
+        }
+      }, 1500);
+    });
+  }
+
+  // 업로드 탭의 DART 수집 버튼(연도+유형 동적)
   window.doCollect = async function() {
     const company = document.getElementById("dc-company").value;
-    const period = document.getElementById("dc-period").value;
-    const includeReport = document.getElementById("dc-report").checked;
-    const status = document.getElementById("dc-status");
-    const btn = document.getElementById("dc-btn");
-    btn.disabled = true;
-    status.innerHTML = `<div class="info-banner">DART에서 ${company}·${period} 수집 시작... (네트워크 상황에 따라 수십 초 소요될 수 있습니다)</div>`;
-
-    let res, data;
-    try {
-      res = await fetch(`${API}/api/library/collect`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ company, period, include_report_pdf: includeReport }),
-      });
-      data = await res.json();
-    } catch (e) {
-      btn.disabled = false;
-      status.innerHTML = `<div class="warn-banner">수집 요청 실패: ${e}</div>`;
-      return;
-    }
-    if (!res.ok) {
-      btn.disabled = false;
-      status.innerHTML = `<div class="warn-banner">수집 시작 실패: ${data.detail || "알 수 없는 오류"}</div>`;
-      return;
-    }
-    pollCollect(company, period);
+    const period = composePeriod(document.getElementById("dc-year").value, document.getElementById("dc-type").value);
+    const btn = document.getElementById("dc-btn"); btn.disabled = true;
+    await startCollect(company, period, document.getElementById("dc-report").checked, document.getElementById("dc-status"));
+    btn.disabled = false;
   };
 
-  async function pollCollect(company, period) {
-    const status = document.getElementById("dc-status");
-    const btn = document.getElementById("dc-btn");
-    const key = `${company}/${period}`;
-    const interval = setInterval(async () => {
-      const res = await fetch(`${API}/api/library/collect/status`).then(r => r.json());
-      const item = (res.items || []).find(i => i.key === key);
-      if (!item) return;
-      if (item.status === "done") {
-        clearInterval(interval);
-        btn.disabled = false;
-        const rep = item.report_collected ? "분기보고서 PDF ✓" : "분기보고서 PDF –";
-        const rev = item.review_collected ? "검토보고서 PDF ✓" : "검토보고서 PDF –";
-        const idx = (item.indexed || []).length ? ` · 인덱싱: ${item.indexed.join(", ")}` : " · 인덱싱 대상 없음";
-        status.innerHTML = `<div class="info-banner">✓ ${company}·${period} 수집 완료 — ${rep} / ${rev}${idx}</div>`;
-        loadLibrary();   // 매트릭스 갱신
-      } else if (item.status === "error") {
-        clearInterval(interval);
-        btn.disabled = false;
-        status.innerHTML = `<div class="warn-banner">수집 실패: ${item.error}</div>`;
-      } else {
-        const stage = item.stage === "indexing" || item.status === "indexing" ? "인덱싱 중" : "수집 중";
-        status.innerHTML = `<div class="info-banner">${company}·${period} ${stage}...</div>`;
-      }
-    }, 1500);
-  }
+  // ----- 라이브러리 인라인 자료 추가 패널 -----
+  function openAddPanel() { document.getElementById("add-panel").classList.remove("hidden"); }
+  window.toggleAddPanel = function() { document.getElementById("add-panel").classList.toggle("hidden"); };
+  window.addEmptyColumn = function() {
+    const p = composePeriod(document.getElementById("add-year").value, document.getElementById("add-type").value);
+    EXTRA_PERIODS.add(p); saveExtraPeriods(); renderMatrix();
+    document.getElementById("add-status").innerHTML = `<div class="info-banner">빈 컬럼 추가: ${periodLabel(p)} — 매트릭스에서 셀을 클릭해 회사별로 수집하세요.</div>`;
+  };
+  window.doAddCollect = async function() {
+    const companySel = document.getElementById("add-company").value;
+    const period = composePeriod(document.getElementById("add-year").value, document.getElementById("add-type").value);
+    const includeReport = document.getElementById("add-report").checked;
+    const statusEl = document.getElementById("add-status");
+    const btn = document.getElementById("add-btn"); btn.disabled = true;
+    EXTRA_PERIODS.add(period); saveExtraPeriods(); renderMatrix();
+    const targets = companySel === "ALL" ? COMPANIES : [companySel];
+    let ok = 0;
+    for (let i = 0; i < targets.length; i++) {
+      statusEl.innerHTML = `<div class="info-banner">[${i + 1}/${targets.length}] ${targets[i]}·${periodLabel(period)} 처리 중...</div>`;
+      if (await startCollect(targets[i], period, includeReport, statusEl)) ok++;  // 순차(rate-limit 회피)
+    }
+    statusEl.innerHTML = `<div class="info-banner">완료 — ${ok}/${targets.length}개 성공 (${periodLabel(period)}).</div>`;
+    btn.disabled = false;
+  };
 
   // ----- Compare -----
   function renderTargetsBar() {
@@ -1366,6 +1441,7 @@
   }
 
   // 초기 로드
+  populatePeriodSelects();  // 연도·유형 동적 채움(업로드·수집·라이브러리 패널)
   loadLibrary();
 </script>
 </body>
