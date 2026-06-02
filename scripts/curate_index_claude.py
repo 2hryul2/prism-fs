@@ -231,6 +231,144 @@ def cmd_diff(args) -> int:
     return 0
 
 
+# 후속(주석 이후) 섹션 헤더 키워드 — 마지막 주석의 page_end 상한 탐지용.
+_POST_NOTES_KW = ("배당에 관한 사항", "회사의 배당정책", "증권의 발행", "재무에 관한 사항",
+                  "외부감사에 관한", "이사회에 관한 사항")
+_SUBHEAD_RE = re.compile(r"^(\d{1,2})-(\d{1,2})\.\s*([가-힣A-Za-z].*)")
+# 병합 헤더 컷용 — 제목 내부에 또 다른 'NN-N.' 가 나오면 그 앞까지만.
+_EMBED_SUBHEAD = re.compile(r"\s*\d{1,2}-\d{1,2}\.")
+_POLICY_TITLES = ("재무제표 작성기준", "중요한 회계정책")
+# 재무제표 본문 제목(노트 아님) — '~에 대한 주석'이 아니면 제외.
+_STATEMENT_KW = ("재무상태표", "포괄손익계산서", "손익계산서", "자본변동표", "현금흐름표",
+                 "이익잉여금처분계산서", "결손금처리계산서")
+
+
+def _is_statement_title(title: str) -> bool:
+    """재무제표 본문 제목이면 True(단, '주석'/'대한' 포함 시 노트로 간주해 False)."""
+    t = title or ""
+    if "주석" in t or "대한" in t:
+        return False
+    return any(k in t for k in _STATEMENT_KW)
+
+
+def _auto_draft(app, company: str, period: str) -> dict:
+    """기존 index.json notes + 감지된 N-x 서브헤더 + 비접미 정책노트를 모아
+    페이지순 next-1 로 page_end 재계산(마지막은 후속 섹션 앞에서 컷)한 초안 dict 생성.
+
+    제목은 모두 PDF 원문 헤더에서 온 verbatim. 네트워크/LLM 없음.
+    """
+    import fitz
+    src_pdf = app.pdf_path(company, period, "report")
+    doc = fitz.open(src_pdf)
+    total = doc.page_count
+    cur_idx = _index_notes(app, company, period)
+    # 1) 시작점: 기존 notes (title·page_start·fs_div 신뢰). page_end 는 뒤에서 재계산.
+    kept = {}  # (fs_div, page_start, title) -> note
+    for n in cur_idx:
+        kept[(n.get("fs_div"), n.get("page_start"), n.get("title"))] = {
+            "no": n.get("no"), "title": n.get("title"),
+            "page_start": n.get("page_start"), "fs_div": n.get("fs_div"),
+        }
+    # 연결/별도 영역 경계(별도 첫 page_start)
+    sep_starts = [n["page_start"] for n in cur_idx if n.get("fs_div") == "별도"]
+    sep_start = min(sep_starts) if sep_starts else total + 1
+
+    def _fsdiv_for(page):
+        return "별도" if page >= sep_start else "연결"
+
+    # 주석 영역 경계 — 기존 연결/별도 주석 page_start 범위로 한정(재무제표 본문·후속 섹션 배제)
+    conn_lo = min((n["page_start"] for n in cur_idx if n.get("fs_div") == "연결"), default=1)
+    # 후속 섹션 시작 페이지(마지막 주석 상한)
+    post_page = total + 1
+    last_note_start = max((n["page_start"] for n in cur_idx), default=1)
+    for c in app._collect_header_candidates(doc):
+        if c["page"] >= last_note_start and any(k in c["title"] for k in _POST_NOTES_KW):
+            post_page = min(post_page, c["page"])
+
+    def _in_notes_region(page):
+        # 연결주석 시작~연결주석끝(별도시작-1), 또는 별도주석 시작~후속섹션-1
+        if conn_lo <= page < sep_start:
+            return True
+        if sep_start <= page < post_page:
+            return True
+        return False
+
+    # 2) N-x 서브헤더 복구(예: 4-1/4-2/4-3 금융위험관리). 주석 영역 + 비-재무제표 제목만.
+    for p in range(total):
+        if not _in_notes_region(p + 1):
+            continue
+        for ln in doc[p].get_text().splitlines()[:5]:
+            m = _SUBHEAD_RE.match(ln.strip())
+            if not m:
+                continue
+            title = _clean_head(m.group(3))
+            if len(_norm(title)) < 3 or _is_statement_title(title):
+                continue
+            fs = _fsdiv_for(p + 1)
+            key = (fs, p + 1, title)
+            kept.setdefault(key, {"no": int(m.group(1)), "title": title,
+                                  "page_start": p + 1, "fs_div": fs})
+    # 3) 비접미 정책노트(작성기준/회계정책) 복구 — 주석 영역 내 헤더 후보에서.
+    for c in app._collect_header_candidates(doc):
+        if c.get("fs_div") or not _in_notes_region(c["page"]):
+            continue
+        title = _clean_head(c["title"])
+        if not any(t in title for t in _POLICY_TITLES):
+            continue
+        fs = _fsdiv_for(c["page"])
+        key = (fs, c["page"], title)
+        kept.setdefault(key, {"no": c["no"], "title": title,
+                              "page_start": c["page"], "fs_div": fs})
+    # 5) 페이지순 정렬 후 page_end = 다음 시작 -1, 마지막은 post_page-1
+    notes = sorted(kept.values(), key=lambda n: (n["page_start"], n["no"]))
+    for i, n in enumerate(notes):
+        nxt = notes[i + 1]["page_start"] if i + 1 < len(notes) else post_page
+        n["page_end"] = max(n["page_start"], min(nxt - 1, total))
+    doc.close()
+    existing_full = None
+    idxp = app.index_path(company, period, "report")
+    if idxp.exists():
+        with open(idxp, "r", encoding="utf-8") as f:
+            existing_full = json.load(f)
+    return {
+        "company": company, "period": period, "doc_type": "report",
+        "source_type": (existing_full or {}).get("source_type", ""),
+        "detected_unit": (existing_full or {}).get("detected_unit", ""),
+        "notes": notes,
+    }
+
+
+def _clean_head(title: str) -> str:
+    """헤더 제목 정리 — 점선 leader·(연결)/(별도) 접미·병합 서브헤더 꼬리 제거. 60자 상한."""
+    t = re.split(r"\.{3,}|…", title)[0]      # 점선 leader 이후 제거
+    t = _EMBED_SUBHEAD.split(t)[0]            # 'NN-N.' 병합 시 앞부분만(헤더 병합 컷)
+    t = re.sub(r"\s*\((연결|별도)\)\s*$", "", t)
+    return t.strip()[:60]
+
+
+def cmd_auto(args) -> int:
+    app = _import_app()
+    draft = _auto_draft(app, args.company, args.period)
+    out = app.index_path(args.company, args.period, "report").parent / "notes_auto.json"
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(draft, f, ensure_ascii=False, indent=2)
+    print(f"초안 작성: {out}  (notes {len(draft['notes'])}건)")
+    # 검증 + diff 출력(리뷰용)
+    provider, total_pages, fitz_doc = _make_page_text_provider(app, args.company, args.period)
+    try:
+        violations, warnings = curate_validate(draft["notes"], total_pages, provider)
+    finally:
+        fitz_doc.close()
+    if violations:
+        print(f"  검증 위반 {len(violations)}건:")
+        for m in violations[:10]:
+            print("   - " + m)
+    else:
+        print(f"  검증 통과(경고 {len(warnings)}건)")
+    _print_diff(_index_notes(app, args.company, args.period), draft["notes"])
+    return 0
+
+
 def cmd_apply(args) -> int:
     doc = _load_notes_doc(Path(args.notes_json))
     app = _import_app()
@@ -306,6 +444,11 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("notes_json", help="notes.json 경로")
     pa.add_argument("--yes", action="store_true", help="실제 재인덱싱 수행(비대화형)")
     pa.set_defaults(func=cmd_apply)
+
+    pau = sub.add_parser("auto", help="기존 notes+서브헤더로 경계 재계산 초안 자동 생성(리뷰용)")
+    pau.add_argument("company")
+    pau.add_argument("period")
+    pau.set_defaults(func=cmd_auto)
     return p
 
 
