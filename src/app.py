@@ -772,8 +772,10 @@ def _annotate_notes(doc, notes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # Phase A: 본문 청크 파라미터. 인덱스 비대 방지 위해 노트당 청크·페이지 상한.
 CHUNK_CHARS = 450          # 청크 목표 길이(자)
 CHUNK_OVERLAP = 80         # 청크 간 겹침(경계 문맥 보존)
-MAX_CHUNKS_PER_NOTE = 16   # 노트당 청크 상한(인덱스 용량 통제)
-CHUNK_SCAN_PAGE_CAP = 10   # 청크 스캔 페이지 상한
+MAX_CHUNKS_PER_NOTE = 40   # 노트당 청크 상한(인덱스 용량 통제)
+MAX_CHUNKS_PER_PAGE = 3    # 페이지당 청크 상한 — 긴 노트가 앞 페이지에서 예산을 소진하지 않고
+                           # 전 페이지 범위에 고르게 분산되도록(긴 주석 커버리지↑)
+CHUNK_SCAN_PAGE_CAP = 20   # 청크 스캔 페이지 상한
 INDEX_SCHEMA = 2           # 청크 인덱싱 스키마 버전(구 인덱스=1/부재 → 제목-only 폴백)
 
 
@@ -804,11 +806,16 @@ def _note_chunks(doc, page_start: int, page_end: int) -> List[Dict[str, Any]]:
     for p in range(page_start, last + 1):
         if not (1 <= p <= doc.page_count):
             continue
+        per_page = 0  # 페이지별 할당량 — 한 페이지가 노트 예산을 독식하지 못하게 분산
         for c in _chunk_text(doc[p - 1].get_text()):
-            if len(c.strip()) >= 20:  # 페이지 머리말·쪽번호 등 잔재 제외
-                out.append({"text": c, "page": p})
+            if len(c.strip()) < 20:  # 페이지 머리말·쪽번호 등 잔재 제외
+                continue
+            out.append({"text": c, "page": p})
+            per_page += 1
             if len(out) >= MAX_CHUNKS_PER_NOTE:
                 return out
+            if per_page >= MAX_CHUNKS_PER_PAGE:
+                break  # 이 페이지 할당량 소진 → 다음 페이지로(긴 노트 전 범위 커버)
     return out
 
 
