@@ -192,6 +192,17 @@ def validate_period(period: str) -> str:
     return period
 
 
+# 기간 정렬키 — 연도 + 분기순(Q1<Q2<Q3<FY). FY(사업보고서)는 연말이라 Q3 뒤.
+_PERIOD_ORDER = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4, "FY": 5}
+
+
+def period_sort_key(period: str):
+    try:
+        return (int(period[:4]), _PERIOD_ORDER.get(period[4:], 9))
+    except (ValueError, IndexError):
+        return (9999, 9)
+
+
 def validate_company(company: str) -> str:
     if company not in VALID_COMPANIES:
         raise HTTPException(400, f"알 수 없는 회사: {company}")
@@ -440,11 +451,11 @@ async def get_library():
             indexed_count += 1
 
     for c in matrix:
-        matrix[c] = sorted(set(matrix[c]))
+        matrix[c] = sorted(set(matrix[c]), key=period_sort_key)
 
     return {
         "matrix": matrix,
-        "available_periods": sorted(periods_seen),
+        "available_periods": sorted(periods_seen, key=period_sort_key),
         "total_files": len(cat["entries"]),
         "total_indexed": indexed_count,
         "entries": cat["entries"],

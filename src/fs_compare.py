@@ -36,6 +36,17 @@ CMP_COL = {
 }
 
 
+def cmp_col(sj_div: str, period: str):
+    """sj_div·기간별 비교 컬럼 선택. 연간(FY)은 손익/현금흐름을 전기 **동기**가 아니라
+    전기 **연간**(frmtrm)과 비교한다(사업보고서엔 frmtrm_q 가 비어 N/A 되는 문제 해소).
+    재무상태표(BS)는 분기·연간 모두 전기말(frmtrm)이라 변화 없음.
+    """
+    col, ko = CMP_COL.get(sj_div, ("frmtrm", "전기"))
+    if period and period.endswith("FY") and col == "frmtrm_q":
+        return ("frmtrm", "전기(연간)")
+    return col, ko
+
+
 def _to_int(s: Any) -> Optional[int]:
     """원문 금액 문자열 → int(임의정밀도). 빈 값/'-'/None 은 None. 환산 아님."""
     if s is None:
@@ -107,7 +118,7 @@ def delta(company: str, period: str, fs_div: str = "연결") -> Dict[str, Any]:
     rows = []
     for a in _accounts(company, period, fs_key):
         sj = a.get("sj_div")
-        col, col_ko = CMP_COL.get(sj, ("frmtrm", "전기"))
+        col, col_ko = cmp_col(sj, period)  # FY 손익은 전기 연간(frmtrm) 비교
         cur = _to_int(a.get("thstrm_amount"))
         # 비교 컬럼 원문값: 손익(frmtrm_q)=전기동기, 그 외(frmtrm)=전기말
         base_raw = a.get("frmtrm_q_amount") if col == "frmtrm_q" else a.get("frmtrm_amount")
@@ -301,7 +312,7 @@ def flags(company: str, period: str, fs_div: str = "연결") -> Dict[str, Any]:
     out = []
     for a in accs:
         sj = a.get("sj_div")
-        col = "frmtrm_q_amount" if (CMP_COL.get(sj, ("frmtrm",))[0] == "frmtrm_q") else "frmtrm_amount"
+        col = "frmtrm_q_amount" if (cmp_col(sj, period)[0] == "frmtrm_q") else "frmtrm_amount"
         cur, prev = _to_int(a.get("thstrm_amount")), _to_int(a.get(col))
         reasons = []
         if cur is not None and prev is not None and prev != 0:
