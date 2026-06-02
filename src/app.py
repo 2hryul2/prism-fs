@@ -927,41 +927,12 @@ async def llm_refine_notes(candidates: list, sample_text: str) -> tuple:
         return candidates, f"error: {e}"
 
 
-async def index_entry(company: str, period: str, doc_type: str = "report"):
+async def embed_and_write_index(company, period, doc_type, notes, detected_unit,
+                                source_type, src_pdf, progress_cb=None) -> dict:
+    """notes(확정) → 제목·청크 임베딩 + index.json(schema=2) 기록 + 카탈로그 upsert.
+    progress_cb(frac:float) 있으면 노트별 진행률 보고(없으면 무시). INDEX_STATUS 미접근.
+    반환: {"notes_count","n_conn","n_sep","detected_unit","total_pages"}."""
     dt = validate_doc_type(doc_type)
-    key = f"{company}/{period}/{dt}"
-    src_pdf = pdf_path(company, period, dt)
-    if not src_pdf.exists():
-        INDEX_STATUS[key] = {"status": "error", "error": "PDF not found"}
-        return
-
-    INDEX_STATUS[key] = {"status": "running", "progress": 0.0, "stage": "extracting"}
-
-    notes, detected_unit, source_type = extract_notes_heuristic(src_pdf)
-    INDEX_STATUS[key]["progress"] = 0.3
-
-    # LLM 보정 단계 (선택적)
-    if _OLLAMA_AVAILABLE and notes:
-        INDEX_STATUS[key]["stage"] = "llm_refining"
-        candidates = [{"no": n["no"], "title": n["title"], "page": n["page_start"]} for n in notes]
-        sample_text = ""
-        with fitz.open(src_pdf) as doc:
-            for pno in range(min(notes[0]["page_start"] - 1 + 5, doc.page_count)):
-                sample_text += doc[pno].get_text() + "\n"
-                if len(sample_text) > 5000:
-                    break
-        refined, refine_status = await llm_refine_notes(candidates, sample_text)
-        INDEX_STATUS[key]["llm_refine_status"] = refine_status
-
-        # 보정된 후보를 원본 notes에 매핑하여 page_range 보존
-        if refine_status == "ok":
-            kept_titles = {r["title"] for r in refined}
-            notes = [n for n in notes if n["title"] in kept_titles]
-    else:
-        INDEX_STATUS[key]["llm_refine_status"] = "skipped"
-
-    INDEX_STATUS[key]["stage"] = "embedding"
-    INDEX_STATUS[key]["progress"] = 0.5
 
     # 제목 + 본문 청크 임베딩(Phase A). doc 1회 오픈으로 청크 본문 추출.
     with fitz.open(src_pdf) as doc:
@@ -977,7 +948,8 @@ async def index_entry(company: str, period: str, doc_type: str = "report"):
                 ch["embedding"] = ce.tolist()
                 ch["tokens"] = tokenize_korean(ch["text"])
             note["chunks"] = chunks
-            INDEX_STATUS[key]["progress"] = 0.5 + 0.5 * (i + 1) / max(len(notes), 1)
+            if progress_cb:
+                progress_cb((i + 1) / max(len(notes), 1))
 
     # 연결/별도 분리 카운트 (full_report 에서 의미. slim 은 전부 연결)
     n_conn = sum(1 for n in notes if n.get("fs_div") == "연결")
@@ -1026,11 +998,61 @@ async def index_entry(company: str, period: str, doc_type: str = "report"):
         }
     upsert_catalog_entry(company, period, **{**existing, **updates})
 
+    return {
+        "notes_count": len(notes),
+        "n_conn": n_conn,
+        "n_sep": n_sep,
+        "detected_unit": detected_unit,
+        "total_pages": total_pages,
+    }
+
+
+async def index_entry(company: str, period: str, doc_type: str = "report"):
+    dt = validate_doc_type(doc_type)
+    key = f"{company}/{period}/{dt}"
+    src_pdf = pdf_path(company, period, dt)
+    if not src_pdf.exists():
+        INDEX_STATUS[key] = {"status": "error", "error": "PDF not found"}
+        return
+
+    INDEX_STATUS[key] = {"status": "running", "progress": 0.0, "stage": "extracting"}
+
+    notes, detected_unit, source_type = extract_notes_heuristic(src_pdf)
+    INDEX_STATUS[key]["progress"] = 0.3
+
+    # LLM 보정 단계 (선택적)
+    if _OLLAMA_AVAILABLE and notes:
+        INDEX_STATUS[key]["stage"] = "llm_refining"
+        candidates = [{"no": n["no"], "title": n["title"], "page": n["page_start"]} for n in notes]
+        sample_text = ""
+        with fitz.open(src_pdf) as doc:
+            for pno in range(min(notes[0]["page_start"] - 1 + 5, doc.page_count)):
+                sample_text += doc[pno].get_text() + "\n"
+                if len(sample_text) > 5000:
+                    break
+        refined, refine_status = await llm_refine_notes(candidates, sample_text)
+        INDEX_STATUS[key]["llm_refine_status"] = refine_status
+
+        # 보정된 후보를 원본 notes에 매핑하여 page_range 보존
+        if refine_status == "ok":
+            kept_titles = {r["title"] for r in refined}
+            notes = [n for n in notes if n["title"] in kept_titles]
+    else:
+        INDEX_STATUS[key]["llm_refine_status"] = "skipped"
+
+    INDEX_STATUS[key]["stage"] = "embedding"
+    INDEX_STATUS[key]["progress"] = 0.5
+
+    res = await embed_and_write_index(
+        company, period, dt, notes, detected_unit, source_type, src_pdf,
+        progress_cb=lambda f: INDEX_STATUS[key].update(progress=0.5 + 0.5 * f),
+    )
+
     INDEX_STATUS[key] = {
         "status": "done",
         "progress": 1.0,
-        "notes_extracted": len(notes),
-        "detected_unit": detected_unit,
+        "notes_extracted": res["notes_count"],
+        "detected_unit": res["detected_unit"],
     }
 
 
