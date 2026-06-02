@@ -1128,16 +1128,26 @@
       h += `<div class="warn-banner">근거가 될 ${fsdiv} 주석을 찾지 못했습니다.${fsdiv === '별도' ? ' (별도 주석은 현재 미추출 — 후속 예정)' : ''}</div>`;
     }
     if ((d.sources || []).length) {
+      const terms = (d.terms || []).filter(Boolean);
+      // 매칭 용어만 볼드, 나머지 본문은 일반. HTML 이스케이프 후 용어 강조.
+      const escHtml = t => (t||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+      const reTerms = terms.length
+        ? new RegExp('(' + terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('|') + ')', 'g')
+        : null;
+      const highlight = text => {
+        let e = escHtml(text);
+        if (reTerms) e = e.replace(reTerms, '<b>$1</b>');
+        return e;
+      };
       h += `<div style="font-size:12px; color:#6b7280; margin:6px 0 4px;">📎 출처 (클릭 시 원본 PDF · 매칭 본문 샘플):</div><div style="display:flex; flex-direction:column; gap:6px;">`;
       h += d.sources.map(s => {
         const pg = s.match_page || s.page_start;  // 실제 매칭 청크 페이지(인용 정밀)
         const url = `${API}/api/pdf?company=${encodeURIComponent(s.company)}&period=${encodeURIComponent(s.period)}&doc_type=report#page=${pg}`;
-        const esc = t => (t||'').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-        // 매칭된 본문 1문장 샘플(볼드, ≤30자) — 백엔드 snippet
+        // 매칭 본문 샘플(≤100자) — 매칭 용어만 볼드, 나머지 일반
         const snip = s.snippet
-          ? `<div style="font-size:12px; color:#1f2937; font-weight:700; margin-top:3px;">“${esc(s.snippet)}…”</div>`
+          ? `<div style="font-size:12px; color:#374151; font-weight:400; margin-top:3px;">“${highlight(s.snippet)}…”</div>`
           : '';
-        return `<div class="chip" style="cursor:pointer; background:#ede9fe; color:#5b21b6; display:block; text-align:left; border-radius:8px; padding:7px 11px;" title="${esc(s.title)}"
+        return `<div class="chip" style="cursor:pointer; background:#ede9fe; color:#5b21b6; display:block; text-align:left; border-radius:8px; padding:7px 11px;" title="${escHtml(s.title)}"
           onclick="window.open('${url}','_blank','width=1000,height=1200,scrollbars=yes,resizable=yes')">
           <span style="font-weight:600;">${s.company}·${s.period} 주석${s.note_no} p${pg} · ${(s.score*100).toFixed(0)}%</span>${snip}</div>`;
       }).join("");

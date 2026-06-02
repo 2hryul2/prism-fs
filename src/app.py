@@ -1823,14 +1823,23 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
         except Exception as e:
             print(f"[notes_rag] LLM 생성 실패(무시): {_safe_err(e)}", file=sys.stderr)
     # 응답엔 본문 text 대신 출처 메타만 노출(원문 보호·경량화). answer 는 sources 동반 보장.
+    # 출처 칩의 매칭 본문 샘플(≤100자). 매칭 용어(질의 형태소)는 프론트가 볼드 처리.
+    q_terms = [t for t in dict.fromkeys(tokenize_korean(q)) if len(t) >= 2]
+
     def _snippet(s):
-        # 매칭된 청크 본문 1문장 샘플(≤30자) — 출처 칩에 볼드 표기용. 텍스트 전용.
         t = re.sub(r"\s+", " ", (s.get("text") or "").strip())
-        return t[:30] or None
+        if not t:
+            return None
+        # 매칭 용어가 화면에 보이도록 첫 매칭 위치로 윈도우 시작(앞 20자 여유)
+        hits = [t.find(term) for term in q_terms if t.find(term) >= 0]
+        if hits:
+            start = max(0, min(hits) - 20)
+            return ("…" if start > 0 else "") + t[start:start + 100]
+        return t[:100]
     src_out = [{**{k: s.get(k) for k in ("company", "period", "fs_div", "note_no",
                                          "title", "page_start", "page_end", "match_page", "score")},
                 "snippet": _snippet(s)} for s in sources]
-    return {"query": q, "fs_div": fs_div, "sources": src_out,
+    return {"query": q, "fs_div": fs_div, "sources": src_out, "terms": q_terms,
             "answer": answer, "mode": mode, "ollama": _OLLAMA_AVAILABLE}
 
 
