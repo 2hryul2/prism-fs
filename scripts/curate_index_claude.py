@@ -262,13 +262,18 @@ def _auto_draft(app, company: str, period: str) -> dict:
     doc = fitz.open(src_pdf)
     total = doc.page_count
     cur_idx = _index_notes(app, company, period)
-    # 1) 시작점: 기존 notes (title·page_start·fs_div 신뢰). page_end 는 뒤에서 재계산.
+    # 1) 시작점: 기존 notes (page_start·fs_div 신뢰). 병합 제목은 개별 노트로 분해
+    #    (서브노트 page_start 는 원 노트 범위에서 실제 등장 페이지로 재탐색). page_end 는 뒤에서 재계산.
     kept = {}  # (fs_div, page_start, title) -> note
     for n in cur_idx:
-        kept[(n.get("fs_div"), n.get("page_start"), n.get("title"))] = {
-            "no": n.get("no"), "title": n.get("title"),
-            "page_start": n.get("page_start"), "fs_div": n.get("fs_div"),
-        }
+        fs = n.get("fs_div")
+        lo = n.get("page_start")
+        hi = n.get("page_end") or lo
+        for sub_no, sub_title in _split_merged_title(n.get("no"), n.get("title")):
+            ps = _resolve_subnote_page(doc, sub_title, lo, hi)
+            kept.setdefault((fs, ps, sub_title), {
+                "no": sub_no, "title": sub_title, "page_start": ps, "fs_div": fs,
+            })
     # 연결/별도 영역 경계(별도 첫 page_start)
     sep_starts = [n["page_start"] for n in cur_idx if n.get("fs_div") == "별도"]
     sep_start = min(sep_starts) if sep_starts else total + 1
@@ -301,8 +306,9 @@ def _auto_draft(app, company: str, period: str) -> dict:
             m = _SUBHEAD_RE.match(ln.strip())
             if not m:
                 continue
-            title = _clean_head(m.group(3))
-            if len(_norm(title)) < 3 or _is_statement_title(title):
+            # _clean_head(점선·접미 컷) → _clean_title('부모,자식' 서브표 정리) 일관 적용
+            title = _clean_title(_clean_head(m.group(3)))
+            if len(_norm(title)) < 2 or _is_statement_title(title):
                 continue
             fs = _fsdiv_for(p + 1)
             key = (fs, p + 1, title)
@@ -344,6 +350,57 @@ def _clean_head(title: str) -> str:
     t = _EMBED_SUBHEAD.split(t)[0]            # 'NN-N.' 병합 시 앞부분만(헤더 병합 컷)
     t = re.sub(r"\s*\((연결|별도)\)\s*$", "", t)
     return t.strip()[:60]
+
+
+# 병합 제목 분리용 — 제목 내부에 ', NN. ' (다른 노트번호) 가 박히면 노트 경계로 간주.
+# 예: "차입부채, 26. 사채" → [(_, "차입부채"), (26, "사채")]
+_MERGED_NOTE = re.compile(r"\s*,\s*(\d{1,2})\.\s+")
+
+
+def _split_merged_title(no, title: str) -> list:
+    """노트번호가 박혀 병합된 제목을 (no, title) 리스트로 분해.
+
+    휴리스틱 추출이 인접 헤더를 ', NN. ' 로 이어붙인 산물을 개별 노트로 복원.
+    분해된 각 제목은 원문 헤더의 부분문자열 → verbatim 유지(검증 통과).
+    번호 병합이 없으면 [(no, _clean_title(title))] 1건 반환.
+    """
+    parts = _MERGED_NOTE.split(title or "")
+    head = _clean_title(parts[0])
+    out = [(no, head)] if len(_norm(head)) >= 2 else []
+    # split 결과: [seg0, num1, seg1, num2, seg2, ...] — 홀수 인덱스=번호, 다음=제목
+    for i in range(1, len(parts), 2):
+        seg = _clean_title(parts[i + 1]) if i + 1 < len(parts) else ""
+        # 60자 절단 잔재("...21. 이")는 1글자 꼬리로 남음 → 드롭(가비지 제목 방지)
+        if len(_norm(seg)) >= 2:
+            out.append((int(parts[i]), seg))
+    return out or [(no, _clean_title(title))]
+
+
+def _clean_title(title: str) -> str:
+    """단일 제목 정리 — 후행 쉼표 제거 후, '부모, 자식' 서브표 형식이면 자식(마지막)만.
+
+    PDF N-x 헤더가 "기타부채, 리스부채" 처럼 [부모,자식] 으로 표기됨 → 부모 접두는
+    노트번호가 묶어주므로 중복. 가장 구체적인 자식 라벨만 남겨 검색성↑·중복 제거.
+    예: "재무정보 요약 사항 기술," → "재무정보 요약 사항 기술"(후행 쉼표만 제거)
+        "기타부채, 리스부채" → "리스부채" / "...충당부채, 충당부채" → "충당부채"
+    (번호 병합 "A, 5. B" 는 _split_merged_title 가 선분해하므로 여기 쉼표는 서브표뿐.)
+    """
+    t = (title or "").strip().rstrip(",").strip()
+    if "," in t:
+        t = t.split(",")[-1].strip()
+    return t
+
+
+def _resolve_subnote_page(doc, title: str, lo: int, hi: int) -> int:
+    """분해된 서브노트 제목이 실제로 등장하는 첫 페이지(1-based)를 [lo,hi]에서 탐색.
+
+    찾으면 그 페이지, 못 찾으면 lo 반환(원 노트 시작으로 폴백 → page_end 재계산이 흡수).
+    """
+    key = _norm(title)
+    for p in range(max(lo, 1), min(hi, doc.page_count) + 1):
+        if key in _norm(doc[p - 1].get_text()):
+            return p
+    return lo
 
 
 def cmd_auto(args) -> int:
