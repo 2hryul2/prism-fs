@@ -1823,8 +1823,13 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
         except Exception as e:
             print(f"[notes_rag] LLM 생성 실패(무시): {_safe_err(e)}", file=sys.stderr)
     # 응답엔 본문 text 대신 출처 메타만 노출(원문 보호·경량화). answer 는 sources 동반 보장.
-    src_out = [{k: s.get(k) for k in ("company", "period", "fs_div", "note_no",
-                                      "title", "page_start", "page_end", "match_page", "score")} for s in sources]
+    def _snippet(s):
+        # 매칭된 청크 본문 1문장 샘플(≤30자) — 출처 칩에 볼드 표기용. 텍스트 전용.
+        t = re.sub(r"\s+", " ", (s.get("text") or "").strip())
+        return t[:30] or None
+    src_out = [{**{k: s.get(k) for k in ("company", "period", "fs_div", "note_no",
+                                         "title", "page_start", "page_end", "match_page", "score")},
+                "snippet": _snippet(s)} for s in sources]
     return {"query": q, "fs_div": fs_div, "sources": src_out,
             "answer": answer, "mode": mode, "ollama": _OLLAMA_AVAILABLE}
 
