@@ -35,14 +35,28 @@ except Exception:  # pragma: no cover - 단위테스트는 명시 경로 사용
 _NS_LINK = "http://www.xbrl.org/2003/linkbase"
 _NS_XLINK = "http://www.w3.org/1999/xlink"
 _NS_XSI = "http://www.w3.org/2001/XMLSchema-instance"
+_NS_XBRLDI = "http://xbrl.org/2006/xbrldi"
 
 _ROLETYPE_TAG = f"{{{_NS_LINK}}}roleType"
 _DEFINITION_TAG = f"{{{_NS_LINK}}}definition"
 _PRESLINK_TAG = f"{{{_NS_LINK}}}presentationLink"
+_DEFLINK_TAG = f"{{{_NS_LINK}}}definitionLink"
 _LOC_TAG = f"{{{_NS_LINK}}}loc"
+_DEFARC_TAG = f"{{{_NS_LINK}}}definitionArc"
 _XLINK_ROLE = f"{{{_NS_XLINK}}}role"
 _XLINK_HREF = f"{{{_NS_XLINK}}}href"
+_XLINK_FROM = f"{{{_NS_XLINK}}}from"
+_XLINK_TO = f"{{{_NS_XLINK}}}to"
+_XLINK_LABEL = f"{{{_NS_XLINK}}}label"
+_XLINK_ARCROLE = f"{{{_NS_XLINK}}}arcrole"
+_EXPLICIT_MEMBER_TAG = f"{{{_NS_XBRLDI}}}explicitMember"
 _XSI_NIL = f"{{{_NS_XSI}}}nil"
+
+# XDT 차원 arcrole(접미만 비교).
+_ARC_ALL = "all"                       # primary LineItems → hypercube(hasHypercube)
+_ARC_HYPERCUBE_DIM = "hypercube-dimension"  # hypercube → axis
+_ARC_DIM_DOMAIN = "dimension-domain"   # axis → domain
+_ARC_DOMAIN_MEMBER = "domain-member"   # 트리(primary 측·domain 측 공용)
 
 # 역할 코드 추출 — roleURI/xlink:role 안의 DXNNNNNN[접미]. 예: ...role-DX835100a
 _DX_RE = re.compile(r"(DX\d+[a-z]?)")
@@ -72,7 +86,7 @@ def find_xbrl_files(xdir: Path) -> Dict[str, Optional[Path]]:
     instance 는 확장자 .xbrl(.xsd 제외). pre 는 *_pre.xml.
     """
     xdir = Path(xdir)
-    out: Dict[str, Optional[Path]] = {"xsd": None, "pre": None, "instance": None}
+    out: Dict[str, Optional[Path]] = {"xsd": None, "pre": None, "def": None, "instance": None}
     if not xdir.exists():
         return out
     for f in sorted(xdir.iterdir()):
@@ -81,6 +95,8 @@ def find_xbrl_files(xdir: Path) -> Dict[str, Optional[Path]]:
             out["xsd"] = out["xsd"] or f
         elif n.endswith("_pre.xml"):
             out["pre"] = out["pre"] or f
+        elif n.endswith("_def.xml"):
+            out["def"] = out["def"] or f
         elif n.endswith(".xbrl"):
             out["instance"] = out["instance"] or f
     return out
@@ -341,6 +357,214 @@ def build_l2(role_types: Dict[str, Dict[str, Any]],
 
 
 # ---------------------------------------------------------------------------
+# L2 정밀화 — _def.xml 하이퍼큐브로 fact 를 차원 좌표 기반 단일 롤 귀속
+# ---------------------------------------------------------------------------
+def parse_def_hypercubes(def_path: Path) -> Dict[str, Dict[str, Any]]:
+    """_def.xml definitionLink 별 하이퍼큐브 → {dx: {primary_items:set, axes:set}}.
+
+    XDT 구조: LineItems --all--> Table --hypercube-dimension--> Axis --dimension-domain--> Domain.
+      primary_items = all 의 LineItems 루트에서 domain-member 로 도달하는 보고 개념(차원 도메인 측 제외).
+      axes          = hypercube-dimension 의 Axis(차원) 집합.
+    개념 키는 prefix:Local(loc href 기준) — 인스턴스 fact·context 차원과 동일 표기.
+    """
+    import xml.etree.ElementTree as ET
+    out: Dict[str, Dict[str, Any]] = {}
+    for _ev, dl in ET.iterparse(str(def_path), events=("end",)):
+        if dl.tag != _DEFLINK_TAG:
+            continue
+        dx = _dx_of(dl.get(_XLINK_ROLE))
+        if not dx:
+            dl.clear()
+            continue
+        loc: Dict[str, Optional[str]] = {}
+        for e in dl.iterfind(_LOC_TAG):
+            loc[e.get(_XLINK_LABEL)] = _href_to_qname(e.get(_XLINK_HREF))
+        all_from: Set[str] = set()     # primary LineItems 루트
+        axes: Set[str] = set()         # 차원(Axis)
+        domain_roots: Set[str] = set() # dimension-domain 의 Domain
+        children: Dict[str, List[str]] = {}  # domain-member 트리
+        for a in dl.iterfind(_DEFARC_TAG):
+            ar = (a.get(_XLINK_ARCROLE) or "").rsplit("/", 1)[-1]
+            fr = loc.get(a.get(_XLINK_FROM))
+            to = loc.get(a.get(_XLINK_TO))
+            if not fr or not to:
+                continue
+            if ar == _ARC_ALL:
+                all_from.add(fr)
+            elif ar == _ARC_HYPERCUBE_DIM:
+                axes.add(to)
+            elif ar == _ARC_DIM_DOMAIN:
+                domain_roots.add(to)
+            elif ar == _ARC_DOMAIN_MEMBER:
+                children.setdefault(fr, []).append(to)
+
+        def _closure(roots: Set[str]) -> Set[str]:
+            seen: Set[str] = set()
+            stack = list(roots)
+            while stack:
+                n = stack.pop()
+                for c in children.get(n, []):
+                    if c not in seen:
+                        seen.add(c)
+                        stack.append(c)
+            return seen
+
+        # 차원 측 노드(도메인 멤버) — primary 에서 제외할 집합
+        dim_nodes = domain_roots | _closure(domain_roots)
+        # primary items = LineItems 루트 + 그 domain-member 자손(차원 측 제외)
+        prim = set(all_from)
+        stack = list(all_from)
+        while stack:
+            n = stack.pop()
+            for c in children.get(n, []):
+                if c in dim_nodes or c in prim:
+                    continue
+                prim.add(c)
+                stack.append(c)
+        rec = out.setdefault(dx, {"primary_items": set(), "axes": set()})
+        rec["primary_items"] |= prim
+        rec["axes"] |= axes
+        dl.clear()
+    return out
+
+
+def parse_context_dims(instance_path: Path) -> Dict[str, frozenset]:
+    """인스턴스 context id → 명시 차원 축 집합(frozenset of axis qname 'prefix:Local').
+
+    <xbrli:context id=..><xbrli:segment><xbrldi:explicitMember dimension="ifrs-full:..Axis">..
+    dimension 속성값은 문서 prefix QName(ET 미확장) → 그대로 axes 키로 사용.
+    """
+    import xml.etree.ElementTree as ET
+    ctx: Dict[str, frozenset] = {}
+    for _ev, elem in ET.iterparse(str(instance_path), events=("end",)):
+        _uri, local = _split_tag(elem.tag)
+        if local == "context":
+            axes = {em.get("dimension") for em in elem.iter(_EXPLICIT_MEMBER_TAG)
+                    if em.get("dimension")}
+            ctx[elem.get("id")] = frozenset(axes)
+            elem.clear()
+        elif elem.get("contextRef") is not None:
+            elem.clear()  # fact 는 여기선 무시(메모리만 정리)
+    return ctx
+
+
+def count_facts_dim(instance_path: Path, ctx_dims: Dict[str, frozenset]
+                    ) -> Tuple[Dict[Tuple[str, frozenset], Dict[str, int]], Dict[str, int]]:
+    """fact 를 (concept, 축집합) 버킷으로 집계 + totals. 축은 context 차원에서 조회.
+
+    버킷 키에 축집합을 포함 → 같은 개념도 차원 조합별로 분리(라우팅·차원수 산출용).
+    """
+    import xml.etree.ElementTree as ET
+    uri2prefix: Dict[str, str] = {}
+    buckets: Dict[Tuple[str, frozenset], Dict[str, int]] = {}
+    totals = {"facts": 0, "numeric": 0, "textblock": 0, "nil": 0, "contexts": len(ctx_dims)}
+    for ev, elem in ET.iterparse(str(instance_path), events=("start-ns", "end")):
+        if ev == "start-ns":
+            prefix, uri = elem
+            uri2prefix[uri] = prefix
+            continue
+        if elem.get("contextRef") is not None:
+            uri, local = _split_tag(elem.tag)
+            prefix = uri2prefix.get(uri, "")
+            qn = f"{prefix}:{local}" if prefix else local
+            axes = ctx_dims.get(elem.get("contextRef"), frozenset())
+            is_tb = local.endswith("TextBlock")
+            is_nil = elem.get(_XSI_NIL) == "true"
+            key = (qn, axes)
+            rec = buckets.setdefault(key, {"numeric": 0, "textblock": 0, "nil": 0, "total": 0})
+            rec["total"] += 1
+            totals["facts"] += 1
+            if is_nil:
+                rec["nil"] += 1
+                totals["nil"] += 1
+            elif is_tb:
+                rec["textblock"] += 1
+                totals["textblock"] += 1
+            else:
+                rec["numeric"] += 1
+                totals["numeric"] += 1
+        elem.clear()
+    return buckets, totals
+
+
+def route_fact(concept: str, axes: frozenset, hypercubes: Dict[str, Dict[str, Any]]
+               ) -> Optional[str]:
+    """(개념, 축집합) → 귀속 role DX 1개(없으면 None). 결정론.
+
+    후보 = 개념을 primary_item 으로 갖는 롤. 그중 축집합 ⊆ 롤 axes 인 것 우선,
+    가장 타이트한 적합(잉여 축 최소 → 축 수 최소 → dx 사전순)을 선택.
+    축 적합 후보 없으면 개념-only 후보 중 dx 최소(폴백).
+    """
+    cands = [dx for dx, h in hypercubes.items() if concept in h["primary_items"]]
+    if not cands:
+        return None
+    valid = [dx for dx in cands if axes <= hypercubes[dx]["axes"]]
+    if valid:
+        return min(valid, key=lambda dx: (len(hypercubes[dx]["axes"] - axes),
+                                          len(hypercubes[dx]["axes"]), dx))
+    return min(cands)
+
+
+def build_l2_dim(role_types: Dict[str, Dict[str, Any]],
+                 hypercubes: Dict[str, Dict[str, Any]],
+                 buckets: Dict[Tuple[str, frozenset], Dict[str, int]],
+                 totals: Dict[str, int],
+                 used: Set[str]) -> Dict[str, Any]:
+    """차원 인지 L2 — 각 fact 버킷을 단일 롤에 귀속(중복 제거) + 롤별 차원수 지표.
+
+    반환: per_note_role(단일귀속 fact·axes_count)·totals(attributed/unattributed/max_axes).
+    """
+    agg: Dict[str, Dict[str, Any]] = {}
+    attributed = 0
+
+    def _ensure(base_dx: str) -> Optional[Dict[str, Any]]:
+        meta = role_types.get(base_dx)
+        if meta is None or not meta["is_note"]:
+            return None
+        return agg.setdefault(base_dx, {
+            "dx": base_dx, "title": meta["title"], "note_no": meta["note_no"],
+            "note_int": meta["note_int"], "fs_kind": meta["fs_kind"],
+            "numeric_facts": 0, "textblock_facts": 0,
+            "axes": set(), "axes_count": 0,
+            "subroles_total": 0, "subroles_covered": 0,
+        })
+
+    sub_by_base: Dict[str, List[str]] = {}
+    for dx, meta in role_types.items():
+        if meta["is_note"]:
+            sub_by_base.setdefault(meta["base"], []).append(dx)
+
+    max_axes = 0
+    for (concept, axes), cnt in buckets.items():
+        max_axes = max(max_axes, len(axes))
+        dx = route_fact(concept, axes, hypercubes)
+        if dx is None:
+            continue
+        base = _base_dx(dx)
+        rec = _ensure(base)
+        if rec is None:
+            continue  # 본문(재무제표) 롤로 귀속 → 주석 L2 에서는 제외
+        rec["numeric_facts"] += cnt["numeric"]
+        rec["textblock_facts"] += cnt["textblock"]
+        rec["axes"] |= set(axes)
+        attributed += cnt["total"]
+
+    for base, rec in agg.items():
+        subs = sub_by_base.get(base, [base])
+        rec["subroles_total"] = len(subs)
+        rec["subroles_covered"] = sum(1 for s in subs if s in used)
+        rec["axes_count"] = len(rec["axes"])
+        rec["axes"] = sorted(rec["axes"])  # JSON 직렬화 가능 + 결정론
+
+    out_totals = dict(totals)
+    out_totals["attributed"] = attributed
+    out_totals["unattributed"] = totals["facts"] - attributed
+    out_totals["max_axes"] = max_axes
+    per_note_role = sorted(agg.values(), key=lambda r: r["dx"])
+    return {"per_note_role": per_note_role, "totals": out_totals, "dimension_aware": True}
+
+
+# ---------------------------------------------------------------------------
 # L3 — PDF index.json ↔ XBRL 주석 롤 매핑
 # ---------------------------------------------------------------------------
 def _norm_title(t: str) -> str:
@@ -433,16 +657,28 @@ def map_pdf_to_xbrl(pdf_notes: List[Dict[str, Any]],
 # 오케스트레이션
 # ---------------------------------------------------------------------------
 def diagnose_files(xsd_path: Path, pre_path: Path, instance_path: Path,
-                   pdf_notes: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """명시 경로 + PDF notes 로 L1/L2/L3 합본 산출(테스트·재사용용 순수 진입점)."""
+                   pdf_notes: List[Dict[str, Any]],
+                   def_path: Optional[Path] = None) -> Dict[str, Any]:
+    """명시 경로 + PDF notes 로 L1/L2/L3 합본 산출(테스트·재사용용 순수 진입점).
+
+    def_path(_def.xml) 가 있으면 **차원 인지 L2**(하이퍼큐브 단일 귀속) 사용 — fact 중복 귀속 해소
+    + 롤별 차원수 지표. 없으면 dimension-naive(presentation concept 단위) 폴백.
+    """
     role_types = parse_role_types(xsd_path)
     used = parse_presentation_roles(pre_path)
     l1 = build_l1(role_types, used)
 
-    concept_to_roles = build_concept_to_roles(pre_path)
-    per_concept, totals = count_instance_facts(instance_path)
-    l2 = build_l2(role_types, concept_to_roles, per_concept, used)
-    l2["totals"] = totals
+    if def_path is not None and Path(def_path).exists():
+        hypercubes = parse_def_hypercubes(def_path)
+        ctx_dims = parse_context_dims(instance_path)
+        buckets, totals = count_facts_dim(instance_path, ctx_dims)
+        l2 = build_l2_dim(role_types, hypercubes, buckets, totals, used)
+    else:
+        concept_to_roles = build_concept_to_roles(pre_path)
+        per_concept, totals = count_instance_facts(instance_path)
+        l2 = build_l2(role_types, concept_to_roles, per_concept, used)
+        l2["totals"] = totals
+        l2["dimension_aware"] = False
 
     l3 = map_pdf_to_xbrl(pdf_notes, role_types, used)
     return {"status": "ok", "l1": l1, "l2": l2, "l3": l3}
@@ -467,5 +703,6 @@ def diagnose_one(company: str, period: str) -> Dict[str, Any]:
     if not (files["xsd"] and files["pre"] and files["instance"]):
         return {**head, "status": "missing_xbrl"}
     pdf_notes = _load_pdf_notes(company, period)
-    body = diagnose_files(files["xsd"], files["pre"], files["instance"], pdf_notes)
+    body = diagnose_files(files["xsd"], files["pre"], files["instance"], pdf_notes,
+                          def_path=files["def"])
     return {**head, **body, "pdf_notes_count": len(pdf_notes)}

@@ -106,3 +106,59 @@ def test_map_pdf_sibling_role_not_false_gap():
     only = {m["xbrl_dx"] for m in res["xbrl_only"]}
     assert "DX835200" not in only      # 형제 세부롤 → 거짓 갭 아님
     assert "DX837000" in only          # 진짜 미대응
+
+
+# ----- L2 차원 인지 라우팅(dimension-aware) -----
+def test_route_fact_concept_only():
+    hc = {
+        "DX819000": {"primary_items": {"dart:NotionalAmount"}, "axes": {"ifrs-full:FsAxis"}},
+        "DX804000": {"primary_items": {"ifrs-full:SegmentRevenue"}, "axes": {"ifrs-full:FsAxis"}},
+    }
+    # 개념이 한 롤에만 → 그 롤
+    assert X.route_fact("dart:NotionalAmount", frozenset({"ifrs-full:FsAxis"}), hc) == "DX819000"
+    # 어느 롤에도 없는 개념(본문) → None
+    assert X.route_fact("ifrs-full:Assets", frozenset(), hc) is None
+
+
+def test_route_fact_tightest_axis_superset():
+    # 공유 개념(FinancialAssets)이 공정가치(축2)·신용위험(축4) 두 롤의 primary item.
+    hc = {
+        "DX835200": {"primary_items": {"ifrs-full:FinancialAssets"},
+                     "axes": {"ifrs-full:FsAxis", "ifrs-full:FairValueLevelAxis"}},
+        "DX835100": {"primary_items": {"ifrs-full:FinancialAssets"},
+                     "axes": {"ifrs-full:FsAxis", "ifrs-full:CustomerAxis",
+                              "ifrs-full:CreditGradeAxis", "ifrs-full:EclAxis"}},
+    }
+    # 신용등급 축이 있는 fact → 신용위험 롤(835100)만 축 ⊇
+    credit = frozenset({"ifrs-full:FsAxis", "ifrs-full:CustomerAxis", "ifrs-full:CreditGradeAxis"})
+    assert X.route_fact("ifrs-full:FinancialAssets", credit, hc) == "DX835100"
+    # 공정가치 수준 축 fact → 공정가치 롤(835200)
+    fv = frozenset({"ifrs-full:FsAxis", "ifrs-full:FairValueLevelAxis"})
+    assert X.route_fact("ifrs-full:FinancialAssets", fv, hc) == "DX835200"
+    # 축이 연결/별도뿐(총계) → 둘 다 적합, 더 타이트(축 적은) 835200 선택(결정론)
+    total = frozenset({"ifrs-full:FsAxis"})
+    assert X.route_fact("ifrs-full:FinancialAssets", total, hc) == "DX835200"
+
+
+def test_build_l2_dim_single_attribution():
+    # 단일 귀속이면 롤별 fact 합 == attributed, 중복 없음.
+    rt = _roles(
+        ("DX819000", "9", 9, "파생상품"),
+        ("DX835100", "4-1", 4, "금융상품 위험 관리"),
+    )
+    hc = {
+        "DX819000": {"primary_items": {"dart:Notional"}, "axes": {"ax:Fs"}},
+        "DX835100": {"primary_items": {"ifrs:FA"}, "axes": {"ax:Fs", "ax:Grade"}},
+    }
+    buckets = {
+        ("dart:Notional", frozenset({"ax:Fs"})): {"numeric": 10, "textblock": 0, "nil": 0, "total": 10},
+        ("ifrs:FA", frozenset({"ax:Fs", "ax:Grade"})): {"numeric": 7, "textblock": 0, "nil": 0, "total": 7},
+        ("zzz:Unmapped", frozenset()): {"numeric": 3, "textblock": 0, "nil": 0, "total": 3},
+    }
+    totals = {"facts": 20, "numeric": 20, "textblock": 0, "nil": 0, "contexts": 5}
+    l2 = X.build_l2_dim(rt, hc, buckets, totals, used={"DX819000", "DX835100"})
+    assert l2["totals"]["attributed"] == 17 and l2["totals"]["unattributed"] == 3
+    assert l2["totals"]["max_axes"] == 2
+    by = {r["dx"]: r for r in l2["per_note_role"]}
+    assert by["DX819000"]["numeric_facts"] == 10 and by["DX819000"]["axes_count"] == 1
+    assert by["DX835100"]["numeric_facts"] == 7 and by["DX835100"]["axes_count"] == 2
