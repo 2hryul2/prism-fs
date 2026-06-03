@@ -156,6 +156,7 @@
     <button class="tab" data-tab="rag" onclick="showTab('rag')">🤖 주석 자연어 질의 (AI 보조)</button>
     <button class="tab" data-tab="fs" onclick="showTab('fs')">📈 재무제표 비교</button>
     <button class="tab" data-tab="coverage" onclick="showTab('coverage')">🧭 커버리지·공시갭</button>
+    <button class="tab" data-tab="xbrl" onclick="showTab('xbrl')">🏷️ 주석 XBRL 태깅</button>
   </div>
 
   <!-- Tab: Library -->
@@ -421,6 +422,32 @@
     </div>
   </div>
 
+  <!-- ===== 주석 XBRL 태깅 진단 ===== -->
+  <div id="tab-xbrl" class="panel hidden">
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+      <div>
+        <h2 style="font-size:17px; font-weight:700;">🏷️ 주석 XBRL 상세태깅 진단</h2>
+        <p style="color:#6b7280; font-size:13px; margin-top:4px;">DART 원본 XBRL(이미 수집됨)을 결정론으로 분석 — 주석이 XBRL로 <strong>어디까지 태깅</strong>됐는지. 네트워크·AI 무경유.</p>
+      </div>
+    </div>
+
+    <h3 style="font-size:15px; font-weight:700; margin-top:18px;">A. 4사 × 분기 횡단 매트릭스 <span style="font-size:11px;color:#3730a3;background:#e0e7ff;border-radius:999px;padding:2px 9px;font-weight:700;">기간편차</span></h3>
+    <p style="color:#6b7280; font-size:12px; margin-top:2px;">fact 깊이·서술(텍스트블록) 태깅·세부공시 사용률·PDF 주석 매칭률. 셀 클릭 시 아래 상세.</p>
+    <div class="matrix-wrap"><table class="cov-table" id="xbrl-matrix"><tr><td class="empty-note">불러오는 중…</td></tr></table></div>
+
+    <h3 style="font-size:15px; font-weight:700; margin-top:26px;">B. 셀 상세</h3>
+    <div class="search-bar" style="margin-top:8px; align-items:center;">
+      <select id="xbrl-company" style="min-width:110px;"></select>
+      <select id="xbrl-period" style="min-width:120px;"></select>
+      <button class="btn" onclick="loadXbrlCell()">진단 보기</button>
+    </div>
+    <div id="xbrl-cell"></div>
+
+    <div class="footer-note">
+      ℹ️ 본 진단은 보고서별로 제출된 XBRL instance·presentation linkbase·taxonomy(roleType) 를 그대로 집계한 결과입니다(차원 미고려=dimension-naive, 1차). 숫자 재구성·AI 생성 없음. <strong>L1</strong>=선언 대비 사용 주석 롤, <strong>L2</strong>=롤별 fact 충실도(숫자/서술), <strong>L3</strong>=PDF 주석 대비 XBRL 태깅 대조.
+    </div>
+  </div>
+
 </div>
 
 <div id="fs-pop" style="position:fixed; z-index:50; max-width:360px; background:#111827; color:#f3f4f6; border-radius:8px; padding:11px 13px; font-size:12px; line-height:1.6; box-shadow:0 6px 24px rgba(0,0,0,.3); display:none;">
@@ -506,7 +533,7 @@
     document.querySelectorAll(".tab").forEach(t => {
       t.classList.toggle("active", t.dataset.tab === name);
     });
-    ["library","upload","compare","rag","fs","coverage"].forEach(n => {
+    ["library","upload","compare","rag","fs","coverage","xbrl"].forEach(n => {
       const el = document.getElementById(`tab-${n}`);
       if (el) el.classList.toggle("hidden", n !== name);
     });
@@ -514,6 +541,7 @@
     if (name === "compare") renderTargetsBar();
     if (name === "fs") loadFsTab();
     if (name === "coverage") loadInsight();
+    if (name === "xbrl") loadXbrlTagging();
   }
 
   // ----- Library -----
@@ -1233,6 +1261,134 @@
 
   window.toast = toast;
   window.showTab = showTab;
+
+  // ===== 주석 XBRL 태깅 진단 탭 =====
+  let XBRL_MATRIX = [];
+  async function loadXbrlTagging() {
+    const csel = document.getElementById("xbrl-company");
+    if (csel && !csel.options.length) csel.innerHTML = COMPANIES.map(c => `<option>${c}</option>`).join("");
+    const psel = document.getElementById("xbrl-period");
+    const periods = (LIBRARY.available_periods && LIBRARY.available_periods.length)
+      ? LIBRARY.available_periods : ["2025Q2", "2025Q3", "2026Q1"];
+    if (psel) {
+      psel.innerHTML = periods.map(p => `<option value="${p}">${periodLabel(p)}</option>`).join("");
+      psel.value = periods[periods.length - 1];
+    }
+    try {
+      const res = await fetch(`${API}/api/xbrl-tagging/matrix`).then(r => r.json());
+      XBRL_MATRIX = res.rows || [];
+      renderXbrlMatrix();
+    } catch (e) {
+      document.getElementById("xbrl-matrix").innerHTML = `<tr><td class="empty-note">매트릭스 로드 실패</td></tr>`;
+    }
+  }
+
+  function xbrlHeat(v, max) { // 0~max 비율로 옅은 파랑(결정론 시각화, 의미부여 아님)
+    const r = max ? Math.min(v / max, 1) : 0;
+    const a = (0.06 + r * 0.34).toFixed(2);
+    return `background:rgba(0,70,255,${a});`;
+  }
+
+  function renderXbrlMatrix() {
+    const tbl = document.getElementById("xbrl-matrix");
+    if (!XBRL_MATRIX.length) { tbl.innerHTML = `<tr><td class="empty-note">진단 데이터가 없습니다. (개발 PC에서 build_xbrl_tagging 사전계산 필요)</td></tr>`; return; }
+    const ok = XBRL_MATRIX.filter(r => r.status === "ok");
+    const maxFacts = Math.max(1, ...ok.map(r => r.facts || 0));
+    let h = `<tr><th style="text-align:left;">회사</th><th>기간</th><th>fact 수</th><th>서술(TextBlock)</th><th>세부공시 used/decl</th><th>사용률</th><th>PDF 매칭(L3)</th></tr>`;
+    let prevCo = null;
+    for (const r of XBRL_MATRIX) {
+      const co = (r.company !== prevCo) ? `<strong>${r.company}</strong>` : "";
+      prevCo = r.company;
+      if (r.status !== "ok") {
+        h += `<tr><td style="text-align:left;">${co}</td><td>${periodLabel(r.period)}</td><td colspan="5" style="color:#9ca3af;">${r.status === "not_built" ? "미생성" : "XBRL 미수집"}</td></tr>`;
+        continue;
+      }
+      const ratioPct = (r.used_ratio * 100).toFixed(1);
+      const l3Pct = (r.l3_rate * 100).toFixed(0);
+      h += `<tr style="cursor:pointer;" onclick="pickXbrlCell('${r.company}','${r.period}')" title="클릭 시 상세">
+        <td style="text-align:left;">${co}</td>
+        <td>${periodLabel(r.period)}</td>
+        <td style="${xbrlHeat(r.facts, maxFacts)}font-variant-numeric:tabular-nums;">${(r.facts || 0).toLocaleString()}</td>
+        <td style="${r.textblock > 0 ? 'background:#dcfce7;color:#166534;font-weight:600;' : 'color:#9ca3af;'}">${r.textblock || 0}</td>
+        <td style="font-variant-numeric:tabular-nums;">${r.notes_used}/${r.notes_declared}</td>
+        <td style="${xbrlHeat(r.used_ratio, 1)}">${ratioPct}%</td>
+        <td style="${xbrlHeat(r.l3_rate, 1)}">${r.l3_matched}/${r.l3_total} (${l3Pct}%)</td>
+      </tr>`;
+    }
+    tbl.innerHTML = h;
+  }
+
+  function pickXbrlCell(company, period) {
+    document.getElementById("xbrl-company").value = company;
+    document.getElementById("xbrl-period").value = period;
+    loadXbrlCell();
+  }
+
+  async function loadXbrlCell() {
+    const company = document.getElementById("xbrl-company").value;
+    const period = document.getElementById("xbrl-period").value;
+    const box = document.getElementById("xbrl-cell");
+    box.innerHTML = `<p style="color:#6b7280;font-size:13px;margin-top:10px;">불러오는 중…</p>`;
+    try {
+      const d = await fetch(`${API}/api/xbrl-tagging?company=${encodeURIComponent(company)}&period=${encodeURIComponent(period)}`).then(r => r.json());
+      renderXbrlCell(company, period, d);
+    } catch (e) {
+      box.innerHTML = `<p style="color:#b91c1c;font-size:13px;">진단 로드 실패</p>`;
+    }
+  }
+
+  function xbrlChips(items, color, label, fmt) {
+    if (!items || !items.length) return "";
+    return `<div style="margin-top:8px;"><div style="font-size:12px;font-weight:700;color:${color};margin-bottom:4px;">${label} (${items.length})</div>
+      <div style="display:flex;flex-wrap:wrap;gap:5px;">${items.map(fmt).join("")}</div></div>`;
+  }
+
+  function renderXbrlCell(company, period, d) {
+    const box = document.getElementById("xbrl-cell");
+    if (!d || d.status === "not_built") {
+      box.innerHTML = `<p style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;font-size:13px;margin-top:10px;">이 셀의 진단이 아직 생성되지 않았습니다. 개발 PC에서 <code>python scripts/build_xbrl_tagging.py build ${company} ${period}</code> 실행 후 새로고침하세요.</p>`;
+      return;
+    }
+    if (d.status === "missing_xbrl") {
+      box.innerHTML = `<p style="color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:10px;font-size:13px;margin-top:10px;">이 보고서는 XBRL이 수집되지 않았습니다(DART 미제공 또는 미수집). 태깅 진단 불가.</p>`;
+      return;
+    }
+    const l1 = d.l1, l2 = d.l2, l3 = d.l3, t = l2.totals;
+    const card = (label, val, sub) => `<div style="flex:1;min-width:130px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:11px 13px;">
+      <div style="font-size:11px;color:#6b7280;font-weight:600;">${label}</div>
+      <div style="font-size:20px;font-weight:800;color:#111827;margin-top:2px;font-variant-numeric:tabular-nums;">${val}</div>
+      ${sub ? `<div style="font-size:11px;color:#6b7280;margin-top:1px;">${sub}</div>` : ""}</div>`;
+
+    let h = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
+      ${card("주석 롤 사용/선언", `${l1.notes_used}/${l1.notes_declared}`, `세부공시 사용률 ${(l1.used_ratio*100).toFixed(1)}%`)}
+      ${card("fact 수(숫자)", t.numeric.toLocaleString(), `컨텍스트 ${t.contexts.toLocaleString()}`)}
+      ${card("서술 태깅(TextBlock)", t.textblock, t.textblock > 0 ? "서술형 주석 일부 XBRL 태깅" : "서술형 미태깅(표만 태깅)")}
+      ${card("PDF 주석 매칭(L3)", `${l3.overall.matched}/${l3.overall.total}`, `연결 ${(l3.by_div.연결.rate*100).toFixed(0)}% · 별도 ${(l3.by_div.별도.rate*100).toFixed(0)}%`)}
+    </div>`;
+
+    // L3 — PDF엔 있으나 XBRL 미태깅(핵심 인사이트)
+    h += xbrlChips(l3.pdf_only, "#b45309", "PDF 주석 중 XBRL 미태깅(주로 서술형)",
+      n => `<span style="background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:999px;padding:2px 9px;font-size:12px;">${n.fs_div}·${n.pdf_no}. ${n.pdf_title}</span>`);
+    // L3 — XBRL 태깅됐으나 PDF 인덱스 미대응(병합주석/누락)
+    h += xbrlChips(l3.xbrl_only, "#6b21a8", "XBRL 태깅 주석 중 PDF 미대응(병합·번호불일치)",
+      n => `<span style="background:#faf5ff;border:1px solid #e9d5ff;color:#6b21a8;border-radius:999px;padding:2px 9px;font-size:12px;">${n.fs_div}·${n.xbrl_note_no}. ${n.xbrl_title}</span>`);
+
+    // L2 — 충실도 상위 주석 롤(fact 깊이)
+    const top = [...l2.per_note_role].sort((a, b) => (b.numeric_facts + b.textblock_facts) - (a.numeric_facts + a.textblock_facts)).slice(0, 12);
+    if (top.length) {
+      h += `<h4 style="font-size:13px;font-weight:700;margin-top:16px;">롤별 태깅 충실도 (상위 12)</h4>
+        <div class="matrix-wrap" style="margin-top:6px;"><table class="cov-table"><tr><th style="text-align:left;">주석 롤</th><th>연결/별도</th><th>숫자 fact</th><th>서술</th><th>세부공시</th></tr>
+        ${top.map(r => `<tr><td style="text-align:left;">${r.note_no ? r.note_no + ". " : ""}${r.title}</td><td>${r.fs_kind}</td>
+          <td style="font-variant-numeric:tabular-nums;">${r.numeric_facts.toLocaleString()}</td>
+          <td>${r.textblock_facts || "—"}</td><td>${r.subroles_covered}/${r.subroles_total}</td></tr>`).join("")}
+        </table></div>`;
+    }
+    box.innerHTML = h;
+  }
+
+  window.loadXbrlTagging = loadXbrlTagging;
+  window.loadXbrlCell = loadXbrlCell;
+  window.pickXbrlCell = pickXbrlCell;
 
   // ===== 재무제표 비교 탭 (fs_compare 결정론 엔진 연동) =====
   const FS_COMPANIES = ["신한", "KB", "하나", "우리"];

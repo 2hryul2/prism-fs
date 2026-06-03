@@ -1883,6 +1883,65 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
             "answer": answer, "mode": mode, "ollama": _OLLAMA_AVAILABLE}
 
 
+# ----------------------------------------------------------------------------
+# 주석 XBRL 상세태깅 진단 (§read-only) — 사전계산 JSON 만 읽음(파싱 0).
+# 대용량 instance 파싱은 scripts/build_xbrl_tagging.py 가 1회 수행 →
+# storage/.../xbrl_tagging.json. 여기선 그 결과를 그대로 노출(숫자 AI 무경유·결정론).
+# ----------------------------------------------------------------------------
+def _load_xbrl_tagging(company: str, period: str) -> Optional[dict]:
+    """셀의 사전계산 진단 JSON 로드. 없으면 None(미생성 셀 안전 처리)."""
+    p = entry_dir(company, period) / "xbrl_tagging.json"
+    if not p.exists():
+        return None
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+@app.get("/api/xbrl-tagging")
+async def xbrl_tagging_cell(company: str, period: str):
+    """1셀 주석 XBRL 태깅 진단(L1 범위·L2 충실도·L3 PDF대조) — 사전계산 결과."""
+    validate_company(company)
+    validate_period(period)
+    diag = _load_xbrl_tagging(company, period)
+    if diag is None:
+        return {"company": company, "period": period, "status": "not_built",
+                "hint": "scripts/build_xbrl_tagging.py build 로 사전계산 필요"}
+    return diag
+
+
+@app.get("/api/xbrl-tagging/matrix")
+async def xbrl_tagging_matrix():
+    """4사×분기 횡단 요약 — 기간편차(used_ratio·fact깊이·textblock·L3) 한 표.
+
+    카탈로그 엔트리 순회 + 사전계산 JSON 읽기만(파싱 0).
+    """
+    rows = []
+    try:
+        for e in load_catalog()["entries"]:
+            co, pd = e.get("company"), e.get("period")
+            diag = _load_xbrl_tagging(co, pd)
+            if diag is None:
+                rows.append({"company": co, "period": pd, "status": "not_built"})
+                continue
+            if diag.get("status") != "ok":
+                rows.append({"company": co, "period": pd, "status": diag.get("status")})
+                continue
+            t = diag["l2"]["totals"]
+            rows.append({
+                "company": co, "period": pd, "status": "ok",
+                "facts": t["facts"], "numeric": t["numeric"], "textblock": t["textblock"],
+                "notes_used": diag["l1"]["notes_used"],
+                "notes_declared": diag["l1"]["notes_declared"],
+                "used_ratio": diag["l1"]["used_ratio"],
+                "l3_rate": diag["l3"]["overall"]["rate"],
+                "l3_matched": diag["l3"]["overall"]["matched"],
+                "l3_total": diag["l3"]["overall"]["total"],
+            })
+    except Exception as e:
+        raise HTTPException(500, _safe_err(e))
+    rows.sort(key=lambda r: (r["company"], r["period"]))
+    return {"rows": rows}
+
+
 # 정적 파일 서빙
 static_dir = BASE_DIR / "static"
 if static_dir.exists():
