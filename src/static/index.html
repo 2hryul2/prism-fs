@@ -1294,13 +1294,14 @@
     if (!XBRL_MATRIX.length) { tbl.innerHTML = `<tr><td class="empty-note">진단 데이터가 없습니다. (개발 PC에서 build_xbrl_tagging 사전계산 필요)</td></tr>`; return; }
     const ok = XBRL_MATRIX.filter(r => r.status === "ok");
     const maxFacts = Math.max(1, ...ok.map(r => r.facts || 0));
-    let h = `<tr><th style="text-align:left;">회사</th><th>기간</th><th>fact 수</th><th>서술(TextBlock)</th><th>세부공시 used/decl</th><th>사용률</th><th>PDF 매칭(L3)</th></tr>`;
+    const maxAxes = Math.max(1, ...ok.map(r => r.max_axes || 0));
+    let h = `<tr><th style="text-align:left;">회사</th><th>기간</th><th>fact 수</th><th>서술(TextBlock)</th><th>최대 차원수</th><th>세부공시 used/decl</th><th>사용률</th><th>PDF 매칭(L3)</th></tr>`;
     let prevCo = null;
     for (const r of XBRL_MATRIX) {
       const co = (r.company !== prevCo) ? `<strong>${r.company}</strong>` : "";
       prevCo = r.company;
       if (r.status !== "ok") {
-        h += `<tr><td style="text-align:left;">${co}</td><td>${periodLabel(r.period)}</td><td colspan="5" style="color:#9ca3af;">${r.status === "not_built" ? "미생성" : "XBRL 미수집"}</td></tr>`;
+        h += `<tr><td style="text-align:left;">${co}</td><td>${periodLabel(r.period)}</td><td colspan="6" style="color:#9ca3af;">${r.status === "not_built" ? "미생성" : "XBRL 미수집"}</td></tr>`;
         continue;
       }
       const ratioPct = (r.used_ratio * 100).toFixed(1);
@@ -1310,6 +1311,7 @@
         <td>${periodLabel(r.period)}</td>
         <td style="${xbrlHeat(r.facts, maxFacts)}font-variant-numeric:tabular-nums;">${(r.facts || 0).toLocaleString()}</td>
         <td style="${r.textblock > 0 ? 'background:#dcfce7;color:#166534;font-weight:600;' : 'color:#9ca3af;'}">${r.textblock || 0}</td>
+        <td style="${xbrlHeat(r.max_axes || 0, maxAxes)}font-variant-numeric:tabular-nums;" title="한 주석 표가 쓰는 분해축 최대 개수 — 상세태깅 정교함">${r.max_axes != null ? r.max_axes : "—"}</td>
         <td style="font-variant-numeric:tabular-nums;">${r.notes_used}/${r.notes_declared}</td>
         <td style="${xbrlHeat(r.used_ratio, 1)}">${ratioPct}%</td>
         <td style="${xbrlHeat(r.l3_rate, 1)}">${r.l3_matched}/${r.l3_total} (${l3Pct}%)</td>
@@ -1359,12 +1361,17 @@
       <div style="font-size:20px;font-weight:800;color:#111827;margin-top:2px;font-variant-numeric:tabular-nums;">${val}</div>
       ${sub ? `<div style="font-size:11px;color:#6b7280;margin-top:1px;">${sub}</div>` : ""}</div>`;
 
+    const factSub = (t.attributed != null)
+      ? `주석 귀속 ${t.attributed.toLocaleString()} · 본문 ${t.unattributed.toLocaleString()}`
+      : `컨텍스트 ${t.contexts.toLocaleString()}`;
     let h = `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">
       ${card("주석 롤 사용/선언", `${l1.notes_used}/${l1.notes_declared}`, `세부공시 사용률 ${(l1.used_ratio*100).toFixed(1)}%`)}
-      ${card("fact 수(숫자)", t.numeric.toLocaleString(), `컨텍스트 ${t.contexts.toLocaleString()}`)}
+      ${card("fact 수(숫자)", t.numeric.toLocaleString(), factSub)}
+      ${card("최대 차원수", (t.max_axes != null ? t.max_axes : "—"), t.max_axes != null ? "한 표의 분해축 최대(정교함)" : "")}
       ${card("서술 태깅(TextBlock)", t.textblock, t.textblock > 0 ? "서술형 주석 일부 XBRL 태깅" : "서술형 미태깅(표만 태깅)")}
       ${card("PDF 주석 매칭(L3)", `${l3.overall.matched}/${l3.overall.total}`, `연결 ${(l3.by_div.연결.rate*100).toFixed(0)}% · 별도 ${(l3.by_div.별도.rate*100).toFixed(0)}%`)}
     </div>`;
+    if (l2.dimension_aware) h += `<p style="font-size:11px;color:#6b7280;margin-top:6px;">✓ 차원 인지(dimension-aware): 각 fact 를 하이퍼큐브 차원 좌표로 단일 주석 롤에 귀속(중복 제거). 롤별 fact 합 = 주석 귀속분.</p>`;
 
     // L3 — PDF엔 있으나 XBRL 미태깅(핵심 인사이트)
     h += xbrlChips(l3.pdf_only, "#b45309", "PDF 주석 중 XBRL 미태깅(주로 서술형)",
@@ -1377,10 +1384,10 @@
     const top = [...l2.per_note_role].sort((a, b) => (b.numeric_facts + b.textblock_facts) - (a.numeric_facts + a.textblock_facts)).slice(0, 12);
     if (top.length) {
       h += `<h4 style="font-size:13px;font-weight:700;margin-top:16px;">롤별 태깅 충실도 (상위 12)</h4>
-        <div class="matrix-wrap" style="margin-top:6px;"><table class="cov-table"><tr><th style="text-align:left;">주석 롤</th><th>연결/별도</th><th>숫자 fact</th><th>서술</th><th>세부공시</th></tr>
+        <div class="matrix-wrap" style="margin-top:6px;"><table class="cov-table"><tr><th style="text-align:left;">주석 롤</th><th>연결/별도</th><th>숫자 fact</th><th>서술</th><th>차원(축)수</th><th>세부공시</th></tr>
         ${top.map(r => `<tr><td style="text-align:left;">${r.note_no ? r.note_no + ". " : ""}${r.title}</td><td>${r.fs_kind}</td>
           <td style="font-variant-numeric:tabular-nums;">${r.numeric_facts.toLocaleString()}</td>
-          <td>${r.textblock_facts || "—"}</td><td>${r.subroles_covered}/${r.subroles_total}</td></tr>`).join("")}
+          <td>${r.textblock_facts || "—"}</td><td style="font-variant-numeric:tabular-nums;">${r.axes_count != null ? r.axes_count : "—"}</td><td>${r.subroles_covered}/${r.subroles_total}</td></tr>`).join("")}
         </table></div>`;
     }
     box.innerHTML = h;

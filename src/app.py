@@ -1929,6 +1929,7 @@ async def xbrl_tagging_matrix():
             rows.append({
                 "company": co, "period": pd, "status": "ok",
                 "facts": t["facts"], "numeric": t["numeric"], "textblock": t["textblock"],
+                "max_axes": t.get("max_axes"),  # 최대 차원수(상세태깅 정교함, dimension-aware)
                 "notes_used": diag["l1"]["notes_used"],
                 "notes_declared": diag["l1"]["notes_declared"],
                 "used_ratio": diag["l1"]["used_ratio"],
