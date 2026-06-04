@@ -8,6 +8,9 @@
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
   body { background: #f4f5f7; color: #1f2937; min-height: 100vh; }
   .app { max-width: 1400px; margin: 0 auto; padding: 24px; }
+  /* 비교조회 탭: 좌우 여백 최소화 → PDF 원본 뷰어 폭 최대화(가독성). */
+  body.cmp-wide .app { max-width: 100%; padding: 12px 14px; }
+  body.cmp-wide #tab-compare.panel { padding: 12px; }
   header { display: flex; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid #e5e7eb; margin-bottom: 20px; }
   .logo { width: 36px; height: 36px; background: #0046ff; color: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-weight: bold; }
   h1 { font-size: 20px; font-weight: 700; }
@@ -91,7 +94,7 @@
   .compare-grid.cols-3 { grid-template-columns: repeat(3, 1fr); }
   .compare-panel { background: white; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
   .panel-head { padding: 10px 14px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
-  .panel-head .top { display: flex; justify-content: space-between; font-size: 12px; color: #6b7280; }
+  .panel-head .top { display: flex; justify-content: space-between; font-size: 24px; color: #374151; font-weight: 700; }
   .panel-head .title { font-weight: 700; font-size: 14px; margin-top: 4px; }
   .panel-head .badge-low { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; margin-left: 6px; }
   .pdf-area { padding: 8px; background: #4a5568; max-height: 600px; overflow-y: auto; }
@@ -641,6 +644,8 @@
       const el = document.getElementById(`tab-${n}`);
       if (el) el.classList.toggle("hidden", n !== name);
     });
+    // 비교조회 탭에서만 좌우 여백 최소화(PDF 뷰어 폭 최대화).
+    document.body.classList.toggle("cmp-wide", name === "compare");
     if (name === "library") loadLibrary();
     if (name === "compare") renderTargetsBar();
     if (name === "fs") loadFsTab();
