@@ -327,6 +327,9 @@ _KIWI_TRIED = False
 _KIWI_KEEP = {"NNG", "NNP", "SL", "SH", "SN", "VV", "VA", "XR"}
 
 
+# A-2(kiwi 사용자사전)·B-3(주기 청킹) 실험은 2026-06-04 실측에서 교차변형 재현율 회귀
+# (골든 1.0→0.88, 동의어-교차 1.0→0.571)로 롤백함 — 세밀 형태소 분할이 이 코퍼스의
+# 교차변형 BM25 중첩(공유 sub-토큰)에 더 유리. 개발노트 참조.
 def _get_kiwi():
     """kiwipiepy 싱글톤(최초 1회 로드, 폐쇄망 오프라인). 미설치/실패 시 None → 정규식 폴백."""
     global _KIWI, _KIWI_TRIED
@@ -1251,27 +1254,24 @@ def _note_unit_cos(q_emb, note: dict):
     return best, page
 
 
-def match_query_in_notes(q_emb, q_text: str, notes_with_emb: list) -> Optional[dict]:
-    """질의(임베딩+원문)를 한 회사 주석목록에 매칭하는 공유 코어.
+def _score_notes_for_query(q_emb, q_text: str, notes_with_emb: list) -> list:
+    """전 노트의 final score·메타를 계산하는 공유 스코어링 코어(순수 규칙, AI 미사용).
 
-    compare()/coverage 가 동일 로직을 쓰도록 추출. 순수 규칙(AI/LLM 미사용).
-    - Phase C: cosine·BM25 를 **제목+본문청크** 로 확장(내용 매칭). cosine=유닛 최댓값,
+    match_query_in_notes(argmax)·rank_notes_for_query(top-k) 가 동일 점수/임계/라벨을
+    공유하도록 추출. 정렬·상위선택 정책은 호출부가 결정(여기선 노트 순서 보존).
+    - Phase C: cosine·BM25 를 제목+본문청크로 확장. cosine=유닛 최댓값,
       BM25 코퍼스=제목+청크 토큰 합본. match_page=최고 유닛의 실제 페이지(인용 정밀).
-    - lexical_hit: 질의 토큰이 제목 **또는 청크 본문** 에 글자 그대로 존재하는가.
+    - lexical_hit: 질의 토큰이 제목 또는 청크 본문에 글자 그대로 존재하는가.
     - keep: 점수 플로어 통과 또는 (어휘 일치 + 완화 하한 통과).
-    - confidence: 고점 + 어휘 일치 동시 충족 시에만 high, 그 외 전부 low.
-      (청크 추가로 cosine 최댓값이 상승 → 재현율↑. 임계는 lexical_hit 게이트로 보강.)
+    - confidence: 고점 + 어휘 일치 동시 충족 시에만 high, 그 외 low.
 
-    Args:
-        q_emb: 질의 임베딩 (np.ndarray)
-        q_text: 질의 원문 (BM25·lexical 용)
-        notes_with_emb: "embedding" 키를 가진 note dict 리스트(chunks 선택적)
     Returns:
-        {note_no,title,page_start,page_end,match_page,score,confidence,lexical_hit,keep} 또는
-        후보 없음(빈 목록) 시 None.
+        notes_with_emb 와 동일 순서의 후보 dict 리스트(빈 입력이면 빈 리스트).
+        각 dict: note_no/title/page_start/page_end/match_page/score(float)/
+                 confidence/lexical_hit/keep/note_kind/min_match.
     """
     if not notes_with_emb:
-        return None
+        return []
 
     scored = [_note_unit_cos(q_emb, n) for n in notes_with_emb]
     cos_scores = np.array([s for s, _ in scored])
@@ -1298,32 +1298,75 @@ def match_query_in_notes(q_emb, q_text: str, notes_with_emb: list) -> Optional[d
     else:
         final = cos_scores
 
-    best_idx = int(np.argmax(final))
-    hit = notes_with_emb[best_idx]
-    score = float(final[best_idx])
-
     q_tokens = tokenize_korean(q_text_exp)
-    lexical_hit = any(qt in hit["title"] for qt in q_tokens) or any(
-        qt in (ch.get("text") or "") for ch in hit.get("chunks", []) for qt in q_tokens)
-    # B-2: 주기(정책 서술)는 키워드 빈약 → 채택 하한 완화. 서술형은 현행 MIN_MATCH_SCORE.
-    hit_kind = note_filters.note_kind(hit.get("title", ""))
-    min_match = POLICY_MIN_MATCH if hit_kind == "주기" else MIN_MATCH_SCORE
-    keep = (score >= min_match) or (lexical_hit and score >= LEXICAL_FLOOR)
-    confidence = "high" if (score >= HIGH_CONF and lexical_hit) else "low"
+    out = []
+    for i, n in enumerate(notes_with_emb):
+        score = float(final[i])
+        lexical_hit = any(qt in n["title"] for qt in q_tokens) or any(
+            qt in (ch.get("text") or "") for ch in n.get("chunks", []) for qt in q_tokens)
+        # B-2: 주기(정책 서술)는 키워드 빈약 → 채택 하한 완화. 서술형은 현행 MIN_MATCH_SCORE.
+        note_kind = note_filters.note_kind(n.get("title", ""))
+        min_match = POLICY_MIN_MATCH if note_kind == "주기" else MIN_MATCH_SCORE
+        keep = (score >= min_match) or (lexical_hit and score >= LEXICAL_FLOOR)
+        confidence = "high" if (score >= HIGH_CONF and lexical_hit) else "low"
+        out.append({
+            "note_no": n["no"],
+            "title": n["title"],
+            "page_start": n["page_start"],
+            "page_end": n["page_end"],
+            "match_page": match_pages[i],
+            "score": score,
+            "confidence": confidence,
+            "lexical_hit": lexical_hit,
+            "keep": keep,
+            "note_kind": note_kind,   # 주기/서술형 — 가중·임계 분기 근거(투명성)
+            "min_match": round(min_match, 3),
+        })
+    return out
 
-    return {
-        "note_no": hit["no"],
-        "title": hit["title"],
-        "page_start": hit["page_start"],
-        "page_end": hit["page_end"],
-        "match_page": match_pages[best_idx],
-        "score": score,
-        "confidence": confidence,
-        "lexical_hit": lexical_hit,
-        "keep": keep,
-        "note_kind": hit_kind,        # 주기/서술형 — 가중·임계 분기 근거(투명성)
-        "min_match": round(min_match, 3),
-    }
+
+def match_query_in_notes(q_emb, q_text: str, notes_with_emb: list) -> Optional[dict]:
+    """질의(임베딩+원문)를 한 회사 주석목록에 매칭 — final score argmax 단일 노트.
+
+    compare()/coverage·structure-diff·topic-map 이 의존(무변경). 점수/임계/라벨은
+    _score_notes_for_query 공유. 동률은 argmax 관례대로 최저 인덱스(결정론).
+
+    Args:
+        q_emb: 질의 임베딩 (np.ndarray)
+        q_text: 질의 원문 (BM25·lexical 용)
+        notes_with_emb: "embedding" 키를 가진 note dict 리스트(chunks 선택적)
+    Returns:
+        최고점 후보 dict 또는 후보 없음(빈 목록) 시 None.
+    """
+    cands = _score_notes_for_query(q_emb, q_text, notes_with_emb)
+    if not cands:
+        return None
+    # 기존 np.argmax 동률 정책(최저 인덱스) 보존 — 무회귀.
+    best_idx = int(np.argmax([c["score"] for c in cands]))
+    return cands[best_idx]
+
+
+def rank_notes_for_query(q_emb, q_text: str, notes_with_emb: list, k: int = 5) -> list:
+    """질의에 대한 상위 k 후보를 score 내림차순으로 반환(낮은 신뢰도·keep=False 포함).
+
+    주석 비교조회(/api/compare topic) 가 회사별 후보 목록을 보여주기 위한 진입점.
+    match_query_in_notes 와 동일 스코어링(_score_notes_for_query) 을 재사용해 일관 보장.
+    정렬: score desc, 동점이면 note_no asc(결정론 — 모델·플랫폼 불문 동일 순서).
+
+    Args:
+        q_emb: 질의 임베딩
+        q_text: 질의 원문
+        notes_with_emb: "embedding" 키 보유 note dict 리스트
+        k: 반환 상한(기본 5)
+    Returns:
+        후보 dict 리스트(≤k). score 는 round3. keep=False 후보도 숨기지 않음.
+    """
+    cands = _score_notes_for_query(q_emb, q_text, notes_with_emb)
+    cands.sort(key=lambda c: (-c["score"], c["note_no"]))
+    top = cands[:max(0, k)]
+    for c in top:
+        c["score"] = round(c["score"], 3)
+    return top
 
 
 @app.post("/api/compare")
@@ -1342,13 +1385,7 @@ async def compare(payload: ComparePayload):
             continue
 
         idx = json.loads(idx_path.read_text(encoding="utf-8"))
-        hit = None
-        score = 0.0
-        # 분류 메타 — number/topic 모드에서 의미 비대칭 해소를 위해 항상 채움.
-        confidence = None
-        lexical_hit = None
-        match_type = None
-        keep = True
+        detected_unit = idx.get("detected_unit")
 
         if payload.mode == "number":
             try:
@@ -1356,54 +1393,43 @@ async def compare(payload: ComparePayload):
             except ValueError:
                 raise HTTPException(400, "번호 모드에는 숫자만 입력 가능합니다.")
             hit = next((n for n in note_filters.filter_notes(_notes_for_comparison(idx, target.fs_div), payload.note_kind) if n["no"] == target_no), None)
-            score = 1.0 if hit else 0.0
-            confidence = "exact"
-            match_type = "exact_no"
-            lexical_hit = None
-            keep = hit is not None
-        else:
-            notes_with_emb = [n for n in note_filters.filter_notes(_notes_for_comparison(idx, target.fs_div), payload.note_kind) if "embedding" in n]
-            if not notes_with_emb:
+            if hit is None:
+                # 정확매칭 실패 = 진짜 미발견. UI 통일을 위해 candidates 빈 목록 대신 missing.
                 missing.append({"company": target.company, "period": target.period,
-                                "doc_type": target.doc_type, "reason": "no embeddings"})
+                                "doc_type": target.doc_type, "reason": "no match"})
                 continue
-
-            m = match_query_in_notes(q_emb, payload.query, notes_with_emb)
-            # notes_with_emb 가 비지 않았으므로 m 은 None 이 아님.
-            hit = {"no": m["note_no"], "title": m["title"],
-                   "page_start": m["page_start"], "page_end": m["page_end"]}
-            score = m["score"]
-            lexical_hit = m["lexical_hit"]
-            keep = m["keep"]
-            confidence = m["confidence"]
-            match_type = "semantic"
-
-        if hit and keep:
-            matches.append({
-                "company": target.company,
-                "period": target.period,
-                "doc_type": target.doc_type,
-                "fs_div": target.fs_div,
+            # number 모드: 결정론 정확매칭을 단일 후보로 통일(AI 무경유·페이지 인용 유지).
+            candidates = [{
                 "note_no": hit["no"],
                 "title": hit["title"],
                 "page_start": hit["page_start"],
                 "page_end": hit["page_end"],
-                "score": round(score, 3),
-                "confidence": confidence,
-                "lexical_hit": lexical_hit,
-                "match_type": match_type,
-                "detected_unit": idx.get("detected_unit"),
-            })
-            if idx.get("detected_unit"):
-                units_seen.add(idx["detected_unit"])
-        elif payload.mode == "topic" and hit is not None and not keep:
-            # 점수가 임계값 미달 — 확신 오매칭 방지를 위해 매치에서 제외하고 사유 기록.
-            missing.append({"company": target.company, "period": target.period,
-                            "doc_type": target.doc_type,
-                            "reason": "below_threshold", "best_score": round(score, 3)})
+                "match_page": hit["page_start"],
+                "score": 1.0,
+                "confidence": "exact",
+                "lexical_hit": None,
+                "keep": True,
+            }]
         else:
-            missing.append({"company": target.company, "period": target.period,
-                            "doc_type": target.doc_type, "reason": "no match"})
+            notes_with_emb = [n for n in note_filters.filter_notes(_notes_for_comparison(idx, target.fs_div), payload.note_kind) if "embedding" in n]
+            if not notes_with_emb:
+                # missing 은 오직 인덱스 없음/임베딩 없음. 임계 미달은 후보로 노출(숨기지 않음).
+                missing.append({"company": target.company, "period": target.period,
+                                "doc_type": target.doc_type, "reason": "no embeddings"})
+                continue
+            # top-5 후보(낮은 신뢰도 포함). below_threshold 라도 missing 으로 보내지 않음.
+            candidates = rank_notes_for_query(q_emb, payload.query, notes_with_emb, k=5)
+
+        matches.append({
+            "company": target.company,
+            "period": target.period,
+            "doc_type": target.doc_type,
+            "fs_div": target.fs_div,
+            "detected_unit": detected_unit,
+            "candidates": candidates,
+        })
+        if detected_unit:
+            units_seen.add(detected_unit)
 
     embedding_backend = (
         f"local-embedding ({EMBED_MODEL_PATH})" if USE_LOCAL_EMBED
@@ -1813,7 +1839,11 @@ async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
         if not idx:
             continue
         cell = [{"company": c, "period": period, "index": idx}]
-        got = notes_rag.retrieve(t_emb, cell, fs_div=fs_div, top_k=per_company)
+        got = notes_rag.retrieve(
+            t_emb, cell, fs_div=fs_div, top_k=per_company,
+            query_text=topic, tokenize=tokenize_korean, expand=synonyms.expand_query,
+            bm25_cls=(BM25Okapi if (USE_BM25 and _HAS_BM25) else None),
+            cos_w=COS_W_DEFAULT, cos_w_policy=COS_W_POLICY)
         for s in got:
             # 청크 본문 우선(정밀); 구 인덱스(text 없음)는 페이지 추출 폴백
             if not s.get("text"):
@@ -1842,7 +1872,7 @@ async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
 async def notes_rag_query(q: str, fs_div: str = "연결",
                           companies: Optional[str] = None,
                           period: Optional[str] = None, top_k: int = 5,
-                          note_kind: str = "전체"):
+                          note_kind: str = "전체", generate: bool = True):
     q = (q or "").strip()
     if not q:
         raise HTTPException(400, "질의가 비어 있습니다.")
@@ -1860,7 +1890,11 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
 
     try:
         q_emb = (await make_embedding(q)).tolist()
-        sources = notes_rag.retrieve(q_emb, cells, fs_div=fs_div, top_k=top_k, note_kind=note_kind)
+        sources = notes_rag.retrieve(
+            q_emb, cells, fs_div=fs_div, top_k=top_k, note_kind=note_kind,
+            query_text=q, tokenize=tokenize_korean, expand=synonyms.expand_query,
+            bm25_cls=(BM25Okapi if (USE_BM25 and _HAS_BM25) else None),
+            cos_w=COS_W_DEFAULT, cos_w_policy=COS_W_POLICY)
         for s in sources:
             # 청크 본문 우선(정밀 인용); 구 인덱스(text 없음)는 페이지 추출 폴백
             if not s.get("text"):
@@ -1875,7 +1909,8 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
                 "mode": "no_evidence", "ollama": _OLLAMA_AVAILABLE}
     answer = None
     mode = "retrieval_only"
-    if _OLLAMA_AVAILABLE or OPENAI_API_KEY:
+    # generate=false: LLM 답변 생략(검색만) — 평가/디버깅용 고속 경로. 인용 강제는 유지.
+    if generate and (_OLLAMA_AVAILABLE or OPENAI_API_KEY):
         try:
             answer = await notes_rag.answer_ollama(q, sources, OLLAMA_URL, OLLAMA_MODEL, openai_key=OPENAI_API_KEY)
             mode = "rag" if answer else "retrieval_only"
@@ -1900,6 +1935,49 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
                 "snippet": _snippet(s)} for s in sources]
     return {"query": q, "fs_div": fs_div, "sources": src_out, "terms": q_terms,
             "answer": answer, "mode": mode, "ollama": _OLLAMA_AVAILABLE}
+
+
+# 제목 스캔 셀 상한 — 경량 응답·결정론 보장(청크 미스캔, 제목만). 카탈로그 정렬 순회.
+_SUGGEST_MAX_CELLS = 32
+
+
+@app.get("/api/terms/suggest")
+async def terms_suggest(q: str, companies: Optional[str] = None,
+                        period: Optional[str] = None, fs_div: str = "연결"):
+    """검색어 동의어/관련 용어 제안(오프라인·결정론·AI 무경유).
+
+    안전경계: 로컬 어휘만 — synonyms 그룹 + 인덱싱된 주석 '제목'. 외부 API·임베딩·랭킹 무관여.
+    제목만 스캔(청크 미접근)·셀 수 캡 → 경량. 비교조회·RAG 두 검색박스 공용.
+    """
+    q = (q or "").strip()
+    if not q:
+        raise HTTPException(400, "질의가 비어 있습니다.")
+    # 화이트리스트 교집합(CLAUDE.md 입력검증) — 미지/오타 회사명은 무시. 비면 전체.
+    want_companies = (set((companies or "").split(",")) - {""}) & set(VALID_COMPANIES) or set(VALID_COMPANIES)
+
+    # 제목 수집 — 인덱싱 report 셀의 notes 제목만(fs_div 필터). 결정론 위해 카탈로그 정렬 순회.
+    note_titles: List[str] = []
+    try:
+        entries = sorted(
+            (e for e in load_catalog()["entries"]
+             if e.get("company") in want_companies and e.get("indexed")
+             and not (period and e.get("period") != period)),
+            key=lambda e: (e.get("company", ""), e.get("period", "")),
+        )
+        for e in entries[:_SUGGEST_MAX_CELLS]:
+            idx = _load_index(e["company"], e["period"], "report")
+            if not idx:
+                continue
+            for n in _notes_for_comparison(idx, fs_div):
+                title = (n.get("title") or "").strip()
+                if title:
+                    note_titles.append(title)
+    except Exception as e:
+        raise HTTPException(500, _safe_err(e))
+
+    q_tokens = tokenize_korean(q)
+    result = synonyms.suggest_terms(q, q_tokens, note_titles, synonyms.expand_query)
+    return {"query": q, "applied": result["applied"], "suggestions": result["suggestions"]}
 
 
 # ----------------------------------------------------------------------------
