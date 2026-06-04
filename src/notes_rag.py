@@ -62,11 +62,19 @@ def _best_unit(query_emb, note: Dict[str, Any]):
 
 
 def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
-             fs_div: str = "연결", top_k: int = 5, note_kind: str = "전체") -> List[Dict[str, Any]]:
+             fs_div: str = "연결", top_k: int = 5, note_kind: str = "전체",
+             query_text: Optional[str] = None, tokenize=None, expand=None, bm25_cls=None,
+             cos_w: float = 0.7, cos_w_policy: float = 0.85,
+             title_bonus: float = 0.15) -> List[Dict[str, Any]]:
     """질의 임베딩 ↔ 각 노트의 제목+본문청크 cosine(최댓값). 동일 fs_div·kind 중 상위 K.
 
     Phase C: 제목만이 아니라 본문 청크까지 평가 → 내용 질의 매칭. match_page/text 동봉
     (최고 청크의 실제 페이지·원문) → 인용 페이지 정밀화. 구 인덱스는 제목-only 폴백.
+
+    하이브리드(옵트인): query_text·tokenize·bm25_cls 가 모두 주입되면 BM25(제목+청크 토큰)를
+    동의어 확장(expand) 질의로 산출해 cosine 과 블렌딩한다. 가중은 note_kind 인지 —
+    주기(정책 서술)는 임베딩 비중 cos_w_policy, 그 외는 cos_w(나머지는 BM25). 순환 import 회피
+    위해 tokenize/expand/bm25_cls 는 호출부(app)에서 주입. 미주입 시 cosine-only(하위호환).
 
     indexed_cells: [{company, period, index}] (index = index.json dict)
     반환: [{company, period, fs_div, note_no, title, page_start, page_end, match_page, text, score}]
@@ -76,6 +84,9 @@ def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
     except ImportError:
         note_filters = None
     cands: List[Dict[str, Any]] = []
+    cos_list: List[float] = []
+    corpus: List[List[str]] = []
+    title_toks_list: List[set] = []  # 제목 토큰(고신호 — 변별 보너스용)
     for cell in indexed_cells:
         idx = cell.get("index") or {}
         for n in idx.get("notes", []):
@@ -86,6 +97,14 @@ def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
             if not n.get("embedding") and not n.get("chunks"):
                 continue
             score, page, text = _best_unit(query_emb, n)
+            cos_list.append(score)
+            # BM25 코퍼스 토큰 = 제목 토큰 + 청크 토큰(인덱스에 사전계산). 없으면 tokenize 폴백.
+            ttoks = list(n.get("tokens") or (tokenize(n.get("title", "")) if tokenize else []))
+            toks = list(ttoks)
+            for ch in n.get("chunks", []):
+                toks.extend(ch.get("tokens") or [])
+            corpus.append(toks)
+            title_toks_list.append(set(ttoks))
             cands.append({
                 "company": cell["company"], "period": cell["period"],
                 "fs_div": n.get("fs_div") or fs_div,
@@ -94,6 +113,33 @@ def retrieve(query_emb: List[float], indexed_cells: List[Dict[str, Any]],
                 "match_page": page, "text": text,
                 "score": round(score, 4),
             })
+
+    # 하이브리드 재점수(옵트인). 미주입이면 cosine 점수 그대로.
+    if query_text and tokenize and bm25_cls and cands:
+        import numpy as np
+        q_tokens = tokenize(expand(query_text) if expand else query_text)
+        q_set = set(q_tokens)
+        bm25 = bm25_cls([c or ["_"] for c in corpus])  # 빈 토큰 방지
+        bm_scores = np.array(bm25.get_scores(q_tokens))
+        bm_norm = bm_scores / max(bm_scores.max(), 1e-9)
+        # 제목 토큰 IDF — 후보 제목들에 흔한 토큰(금융·자산 등)은 변별력↓ → 보너스 가중↓.
+        import math
+        N = len(cands)
+        df: Dict[str, int] = {}
+        for tset in title_toks_list:
+            for t in (tset & q_set):
+                df[t] = df.get(t, 0) + 1
+        idf = {t: math.log((N + 1) / (df.get(t, 0) + 1)) + 1.0 for t in q_set}
+        idf_total = sum(idf.values()) or 1.0
+        for i, c in enumerate(cands):
+            kind = note_filters.note_kind(c["title"] or "") if note_filters else "서술형"
+            w = cos_w_policy if kind == "주기" else cos_w
+            base = w * cos_list[i] + (1.0 - w) * bm_norm[i]
+            # 제목 일치 보너스(IDF 가중) — 질의어가 제목에 직접 등장할수록 가산하되, 희소(변별력
+            # 높은) 토큰 일치를 우대. 유사 제목 변별(회계정책 vs 회계추정·FVOCI 표적 구분).
+            ov = sum(idf[t] for t in (q_set & title_toks_list[i])) / idf_total
+            c["score"] = round(float(base + title_bonus * ov), 4)
+
     cands.sort(key=lambda c: c["score"], reverse=True)
     return cands[:top_k]
 
