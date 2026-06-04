@@ -71,6 +71,19 @@
   .search-bar input { flex: 1; padding: 12px 14px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; }
   .search-bar select { padding: 12px; border: 1px solid #d1d5db; border-radius: 8px; }
 
+  /* C2 동의어/관련 용어 제안 — 로컬 어휘만(AI 무경유), 클릭 시 검색박스에 추가 */
+  .suggest-area { margin: -6px 0 14px; display: none; }
+  .suggest-area.show { display: block; }
+  .suggest-applied { font-size: 12px; color: #6b7280; margin-bottom: 6px; }
+  .suggest-applied b { color: #374151; font-weight: 600; }
+  .suggest-chips { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .suggest-chips .lbl { font-size: 12px; color: #9ca3af; margin-right: 2px; }
+  .chip { font-size: 12px; padding: 4px 10px; border-radius: 999px; border: 1px solid transparent; cursor: pointer; line-height: 1.2; }
+  .chip-syn { background: #e0e7ff; color: #3730a3; border-color: #c7d2fe; }
+  .chip-syn:hover { background: #c7d2fe; }
+  .chip-corpus { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+  .chip-corpus:hover { background: #e2e8f0; }
+
   /* Compare grid */
   .compare-grid { display: grid; gap: 12px; }
   .compare-grid.cols-1 { grid-template-columns: 1fr; }
@@ -83,6 +96,16 @@
   .panel-head .badge-low { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; margin-left: 6px; }
   .pdf-area { padding: 8px; background: #4a5568; max-height: 600px; overflow-y: auto; }
   .pdf-canvas { width: 100%; background: white; margin-bottom: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+  /* C1 — 순위 후보 목록(≤5). 행 클릭 시 하단 PDF 미리보기 교체. */
+  .cand-list { border-bottom: 1px solid #e5e7eb; }
+  .cand-row { display: flex; align-items: baseline; gap: 8px; padding: 7px 14px; font-size: 12px; cursor: pointer; border-top: 1px solid #f1f3f5; }
+  .cand-row:first-child { border-top: none; }
+  .cand-row:hover { background: #f3f6ff; }
+  .cand-row.sel { background: #eff4ff; box-shadow: inset 3px 0 0 #3b6df0; }
+  .cand-row .rk { color: #9ca3af; font-weight: 700; min-width: 16px; }
+  .cand-row .nm { font-weight: 600; color: #1f2937; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cand-row .sc { color: #6b7280; font-variant-numeric: tabular-nums; }
+  .cand-row .badge-low { background: #fef3c7; color: #92400e; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; }
 
   .info-banner { background: #eff4ff; border: 1px solid #c7d6ff; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #1e3a8a; }
   .warn-banner { background: #fef9e7; border-left: 4px solid #f59e0b; border-radius: 4px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: #78350f; }
@@ -305,6 +328,8 @@
       <button class="btn" onclick="doCompare()">검색</button>
     </div>
 
+    <div id="suggest-compare" class="suggest-area" data-target="query"></div>
+
     <div id="results-info"></div>
     <div class="compare-grid cols-2" id="compare-grid"></div>
 
@@ -327,6 +352,7 @@
       <select id="rag-kind" title="주석 종류"><option value="전체">전체</option><option value="주기">주기</option><option value="서술형">서술형</option></select>
       <button class="btn" style="background:#5b21b6;" onclick="doRag()">질의</button>
     </div>
+    <div id="suggest-rag" class="suggest-area" data-target="rag-q"></div>
     <div id="rag-result"></div>
     <div class="footer-note">
       ℹ️ AI 답변(보라 박스)은 주석 텍스트 기반이며 출처 인용을 동반합니다. 숫자 재구성·단위 환산은 하지 않습니다(human-in-the-loop 검증 필요).
@@ -465,6 +491,9 @@
 <script>
   const API = "";
   const COMPANIES = ["신한", "KB", "하나", "우리"];
+  // HTML 이스케이프 — innerHTML 보간 시 주석 제목·질의 등 데이터 안전 처리(S1).
+  const escapeHtml = t => String(t == null ? "" : t)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   let LIBRARY = { matrix: {}, available_periods: [], entries: [] };
 
   // ----- 기간(분기/연간) 헬퍼 — 하드코딩 드롭다운 제거, 임의 연도·유형 추가 가능 -----
@@ -525,6 +554,81 @@
   function fsNotesCount(entry, fsdiv) {
     if (!entry) return null;
     return entry["notes_count_" + fsdiv] || 0;
+  }
+
+  // ----- C2 동의어/관련 용어 제안 (오프라인·결정론, 자동검색 안 함) -----
+  // 두 검색박스(#query 비교, #rag-q RAG) 공용. 입력 디바운스 → /api/terms/suggest →
+  // 반영된 동의어 텍스트 + 클릭형 칩 렌더. 칩 클릭 시 해당 입력에 용어 추가(중복 방지)+포커스.
+  const _suggestTimers = {};
+
+  // 비교조회는 SELECTED 에서 companies/period 도출(없으면 전체). RAG 는 라이브러리 선택 회사.
+  function _suggestScope(targetId) {
+    if (SELECTED.size === 0) return {};
+    const cos = new Set(), periods = new Set();
+    SELECTED.forEach(k => { const s = parseSelKey(k); cos.add(s.company); periods.add(s.period); });
+    const scope = { companies: [...cos].join(",") };
+    if (periods.size === 1) scope.period = [...periods][0];  // 단일 기간일 때만 기간 한정
+    return scope;
+  }
+
+  function bindSuggest(inputId, areaId) {
+    const input = document.getElementById(inputId);
+    const area = document.getElementById(areaId);
+    if (!input || !area) return;
+    input.addEventListener("input", () => {
+      clearTimeout(_suggestTimers[areaId]);
+      const q = input.value.trim();
+      if (q.length < 2) { area.classList.remove("show"); area.innerHTML = ""; return; }
+      _suggestTimers[areaId] = setTimeout(() => fetchSuggest(q, input, area), 350);
+    });
+  }
+
+  async function fetchSuggest(q, input, area) {
+    const scope = _suggestScope(input.id);
+    const params = new URLSearchParams({ q });
+    if (scope.companies) params.set("companies", scope.companies);
+    if (scope.period) params.set("period", scope.period);
+    try {
+      const res = await fetch(`${API}/api/terms/suggest?` + params.toString());
+      if (!res.ok) { area.classList.remove("show"); return; }
+      const data = await res.json();
+      if (input.value.trim() !== q) return;  // 응답 지연 중 입력 변경 → 폐기(경합 방지)
+      renderSuggest(data, input, area);
+    } catch (e) { area.classList.remove("show"); }
+  }
+
+  function renderSuggest(data, input, area) {
+    const applied = data.applied || [];
+    const sugg = data.suggestions || [];
+    if (applied.length === 0 && sugg.length === 0) {
+      area.classList.remove("show"); area.innerHTML = ""; return;
+    }
+    let html = "";
+    if (applied.length) {
+      html += `<div class="suggest-applied">이 검색에 반영된 동의어: <b>`
+        + applied.map(escapeHtml).join(" · ") + `</b></div>`;
+    }
+    if (sugg.length) {
+      html += `<div class="suggest-chips"><span class="lbl">관련 용어</span>`
+        + sugg.map(s => {
+            const cls = s.kind === "synonym" ? "chip chip-syn" : "chip chip-corpus";
+            return `<span class="${cls}" data-term="${escapeHtml(s.term)}">${escapeHtml(s.term)}</span>`;
+          }).join("") + `</div>`;
+    }
+    area.innerHTML = html;
+    area.classList.add("show");
+    area.querySelectorAll(".chip").forEach(chip => {
+      chip.addEventListener("click", () => appendTerm(input, chip.getAttribute("data-term")));
+    });
+  }
+
+  // 칩 클릭 → 입력에 용어 추가(공백 구분, 중복 방지). 자동검색 안 함 — 사용자 검토 후 검색.
+  function appendTerm(input, term) {
+    const cur = input.value.trim();
+    const tokens = cur ? cur.split(/\s+/) : [];
+    if (!tokens.includes(term)) tokens.push(term);
+    input.value = tokens.join(" ");
+    input.focus();
   }
 
   // ----- Tabs -----
@@ -893,13 +997,16 @@
     });
     const data = await res.json();
 
-    let info = `<div class="info-banner"><strong>"${q}"</strong> 매칭 결과 (${data.matches.length}개): `;
-    info += data.matches.map(m => `${FSDIV_ICON[m.fs_div || '연결']} ${m.company}·${m.period} #${m.note_no}`).join(" · ");
+    // C1: matches = 타깃 단위 객체(candidates 보유). 후보≥1 타깃 수가 "매칭 결과".
+    const matched = data.matches.filter(m => (m.candidates || []).length > 0);
+    let info = `<div class="info-banner"><strong>"${escapeHtml(q)}"</strong> 매칭 결과 (${matched.length}개): `;
+    info += matched.map(m => `${FSDIV_ICON[m.fs_div || '연결']} ${m.company}·${m.period} #${m.candidates[0].note_no}`).join(" · ");
     info += `</div>`;
 
     if (data.unit_warning) {
       info += `<div class="warn-banner">⚠️ 단위 차이: ${data.units_seen.join(", ")} — 비교 시 단위를 직접 확인하세요.</div>`;
     }
+    // "매칭 실패" 배너는 missing(미수집: 인덱스/임베딩 없음)일 때만. 낮은 신뢰도는 후보로 노출.
     if (data.missing.length > 0) {
       const sepMiss = targets.some(t => t.fs_div === "별도");
       info += `<div class="warn-banner">⚠️ 매칭 실패: ${data.missing.map(m => `${m.company}·${m.period}`).join(", ")}`
@@ -908,29 +1015,51 @@
     }
     document.getElementById("results-info").innerHTML = info;
 
-    // 레이아웃 자동 조정
+    // 후보가 있는 타깃만 패널로. 레이아웃 자동 조정.
     const grid = document.getElementById("compare-grid");
-    grid.className = "compare-grid cols-" + (data.matches.length <= 1 ? 1 : data.matches.length <= 4 ? 2 : 3);
+    grid.className = "compare-grid cols-" + (matched.length <= 1 ? 1 : matched.length <= 4 ? 2 : 3);
 
-    grid.innerHTML = data.matches.map((m, i) => {
-      const lowConf = m.score < 0.85;
+    grid.innerHTML = matched.map((m, i) => {
       const fd = m.fs_div || "연결";
+      const unit = m.detected_unit ? ` <span style="color:#6b7280;font-weight:normal;">(단위: ${m.detected_unit})</span>` : "";
+      const rows = m.candidates.map((c, j) => {
+        const low = c.confidence !== "high"
+          ? ' <span class="badge-low">낮은 신뢰도</span>' : '';
+        return `<div class="cand-row${j === 0 ? ' sel' : ''}" data-panel="${i}" data-cand="${j}"
+            onclick="selectCandidate(${i}, ${j})">
+          <span class="rk">${j + 1}</span>
+          <span class="nm">주석 ${c.note_no} · ${escapeHtml(c.title)}</span>
+          <span class="sc">score ${c.score}${low}</span>
+        </div>`;
+      }).join("");
       return `<div class="compare-panel">
         <div class="panel-head">
-          <div class="top">
-            <span>${FSDIV_ICON[fd]} ${m.company} · ${m.period} · ${FSDIV_FULL[fd]} 주석</span>
-            <span>p.${m.page_start}-${m.page_end} · score ${m.score}${lowConf ? ' <span class="badge-low">낮은 신뢰도</span>' : ''}</span>
-          </div>
-          <div class="title">주석 ${m.note_no} — ${m.title}${m.detected_unit ? ' <span style="color:#6b7280;font-weight:normal;">(단위: ' + m.detected_unit + ')</span>' : ''}</div>
+          <div class="top"><span>${FSDIV_ICON[fd]} ${m.company} · ${m.period} · ${FSDIV_FULL[fd]} 주석${unit}</span></div>
         </div>
+        <div class="cand-list" id="cands-${i}">${rows}</div>
         <div class="pdf-area" id="pdf-${i}"></div>
       </div>`;
     }).join("");
 
-    for (let i = 0; i < data.matches.length; i++) {
-      const m = data.matches[i];
-      renderPdfRange(m.company, m.period, m.page_start, m.page_end, `pdf-${i}`);  // 항상 분기보고서(report)
+    // 패널당 PDF 1개만 렌더(선택 후보). 기본 1위 선택 → 5개 동시 렌더 금지(성능).
+    COMPARE_PANELS = matched;
+    for (let i = 0; i < matched.length; i++) selectCandidate(i, 0);
+  };
+
+  let COMPARE_PANELS = [];
+  // 후보 행 클릭 → 선택 표시 갱신 + 해당 후보 PDF 범위로 미리보기 교체(패널당 1렌더).
+  window.selectCandidate = function(panelIdx, candIdx) {
+    const m = COMPARE_PANELS[panelIdx];
+    if (!m) return;
+    const c = m.candidates[candIdx];
+    if (!c) return;
+    const list = document.getElementById(`cands-${panelIdx}`);
+    if (list) {
+      list.querySelectorAll(".cand-row").forEach(r => r.classList.remove("sel"));
+      const row = list.querySelector(`.cand-row[data-cand="${candIdx}"]`);
+      if (row) row.classList.add("sel");
     }
+    renderPdfRange(m.company, m.period, c.page_start, c.page_end, `pdf-${panelIdx}`);  // 항상 분기보고서(report)
   };
 
   async function renderPdfRange(company, period, start, end, containerId) {
@@ -1606,6 +1735,8 @@
   // 초기 로드
   populatePeriodSelects();  // 연도·유형 동적 채움(업로드·수집·라이브러리 패널)
   loadLibrary();
+  bindSuggest("query", "suggest-compare");   // 비교조회 검색박스 동의어 제안
+  bindSuggest("rag-q", "suggest-rag");        // RAG 질의 검색박스 동의어 제안
 </script>
 </body>
 </html>
