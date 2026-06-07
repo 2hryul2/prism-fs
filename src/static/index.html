@@ -170,6 +170,104 @@
   .kg-rel-table td.rel-name { font-family: 'Consolas','Courier New',monospace; font-weight: 600; color: #0046ff; }
   .kg-rel-table td.rel-node { font-weight: 600; }
   .kg-rel-table td.rel-card { color: #6b7280; font-size: 12px; }
+
+  /* ===== 회계 개념 온톨로지 · Graph-RAG 설명가능 검색 (RAG 탭 통합, kgx- 네임스페이스로 격리) ===== */
+  #kgx-explorer { margin-top: 22px; border-top: 1px dashed #e5e7eb; padding-top: 18px; }
+  #kgx-explorer * { box-sizing: border-box; }
+  #kgx-explorer .kgx-head { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
+  #kgx-explorer .kgx-head h3 { font-size:15px; font-weight:700; color:#1f2937; }
+  #kgx-explorer .kgx-head .kgx-sub { font-size:12px; color:#6b7280; }
+  #kgx-explorer .kgx-searchbar { display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+  #kgx-explorer .kgx-searchbar input { flex:1; padding:11px 14px; border:1px solid #d1d5db; border-radius:8px; font-size:14px; }
+  #kgx-explorer .kgx-searchbar input:focus { outline:none; border-color:#0046ff; box-shadow:0 0 0 3px rgba(0,70,255,.1); }
+  #kgx-explorer .kgx-btn { padding:11px 18px; background:#0046ff; color:#fff; border:none; border-radius:8px; font-size:14px; font-weight:600; cursor:pointer; }
+  #kgx-explorer .kgx-btn:hover { background:#0039cc; }
+  #kgx-explorer .kgx-btn-ghost { background:#fff; color:#374151; border:1px solid #d1d5db; border-radius:8px; padding:8px 14px; font-size:13px; cursor:pointer; }
+  #kgx-explorer .kgx-btn-ghost:hover { background:#f3f4f6; }
+  #kgx-explorer .kgx-quick { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:14px; align-items:center; }
+  #kgx-explorer .kgx-quick .kgx-lbl { font-size:12px; color:#9ca3af; }
+  #kgx-explorer .kgx-qchip { font-size:12px; padding:4px 11px; border-radius:999px; border:1px solid #c7d2fe; background:#e0e7ff; color:#3730a3; cursor:pointer; }
+  #kgx-explorer .kgx-qchip:hover { background:#c7d2fe; }
+  #kgx-explorer .kgx-layout { display:grid; grid-template-columns:1fr 420px; gap:16px; align-items:start; }
+  @media (max-width:1100px){ #kgx-explorer .kgx-layout { grid-template-columns:1fr; } }
+  #kgx-explorer .kgx-panel { background:#fff; border:1px solid #eef0f3; border-radius:12px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  #kgx-explorer .kgx-panelhead { padding:12px 16px; border-bottom:1px solid #f0f1f3; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  #kgx-explorer .kgx-panelhead h4 { font-size:14px; font-weight:700; }
+  #kgx-explorer .kgx-panelhead .kgx-hint { font-size:11px; color:#9ca3af; margin-left:auto; }
+  #kgx-graph { width:100%; height:560px; display:block; border-radius:0 0 12px 12px; background:radial-gradient(circle at 50% 40%, #fbfcff 0%, #f4f6fb 100%); cursor:grab; }
+  #kgx-graph.grabbing { cursor:grabbing; }
+  #kgx-explorer .kgx-edge { stroke-width:1.5; fill:none; }
+  #kgx-explorer .kgx-edge-관련 { stroke:#9ca3af; stroke-dasharray:5 4; }
+  #kgx-explorer .kgx-edge-상위 { stroke:#2563eb; stroke-width:1.8; }
+  #kgx-explorer .kgx-edge-측정대상 { stroke:#9333ea; stroke-width:1.8; }
+  #kgx-explorer .kgx-edge-공시영역 { stroke:#059669; stroke-dasharray:2 4; stroke-width:1.6; }
+  #kgx-explorer .kgx-edge.pending { stroke:#f59e0b; stroke-dasharray:4 4; stroke-width:2.2; }
+  #kgx-explorer .kgx-edge.path-hot { stroke:#0046ff !important; stroke-width:3.5 !important; stroke-dasharray:none !important; }
+  #kgx-explorer .kgx-edge-label { font-size:9px; fill:#6b7280; }
+  #kgx-explorer .kgx-node circle { stroke:#fff; stroke-width:2; cursor:pointer; transition:filter .15s; }
+  #kgx-explorer .kgx-node.kind-주기 circle { fill:#f59e0b; }
+  #kgx-explorer .kgx-node.kind-서술형 circle { fill:#3b82f6; }
+  #kgx-explorer .kgx-node text { font-size:11px; font-weight:600; fill:#1f2937; pointer-events:none; text-anchor:middle; }
+  #kgx-explorer .kgx-node.dim { opacity:.22; }
+  #kgx-explorer .kgx-node.hit circle { fill:#0046ff; filter:drop-shadow(0 0 9px rgba(0,70,255,.85)); }
+  #kgx-explorer .kgx-node.merge circle { stroke:#0046ff; stroke-width:3.5; filter:drop-shadow(0 0 7px rgba(0,70,255,.55)); }
+  #kgx-explorer .kgx-node.neighbor circle { stroke:#f59e0b; stroke-width:3; }
+  #kgx-explorer .kgx-node.pulse circle { animation:kgxpulse 1.1s ease-out 2; }
+  @keyframes kgxpulse { 0%{r:var(--r);} 50%{r:calc(var(--r) + 7px);} 100%{r:var(--r);} }
+  #kgx-explorer .kgx-legend { display:flex; gap:14px; flex-wrap:wrap; padding:8px 16px; font-size:11px; color:#4b5563; border-top:1px solid #f0f1f3; }
+  #kgx-explorer .kgx-legend span { display:inline-flex; align-items:center; gap:5px; }
+  #kgx-explorer .kgx-lgline { width:22px; height:0; border-top-width:2px; border-top-style:solid; }
+  #kgx-explorer .kgx-lgdot { width:11px; height:11px; border-radius:50%; border:2px solid #fff; box-shadow:0 0 0 1px #d1d5db; }
+  #kgx-explorer .kgx-layertoggle { display:inline-flex; border:1px solid #d1d5db; border-radius:8px; overflow:hidden; }
+  #kgx-explorer .kgx-layertoggle button { padding:7px 12px; background:#fff; border:none; font-size:12px; cursor:pointer; color:#6b7280; border-right:1px solid #e5e7eb; }
+  #kgx-explorer .kgx-layertoggle button:last-child { border-right:none; }
+  #kgx-explorer .kgx-layertoggle button.active { background:#0046ff; color:#fff; font-weight:700; }
+  #kgx-explorer .kgx-right { display:flex; flex-direction:column; gap:16px; }
+  #kgx-explorer .kgx-prov { padding:14px 16px; }
+  #kgx-explorer .kgx-prov.empty { color:#9ca3af; font-size:13px; text-align:center; padding:32px 16px; }
+  #kgx-explorer .kgx-mergenote { background:#eff4ff; border:1px solid #c7d2fe; border-radius:8px; padding:10px 12px; font-size:12.5px; color:#1e3a8a; margin-bottom:12px; line-height:1.5; }
+  #kgx-explorer .kgx-mergenote b { font-weight:700; }
+  #kgx-explorer .kgx-suggblock { margin-bottom:12px; }
+  #kgx-explorer .kgx-suggblock .kgx-sl { font-size:11px; color:#9ca3af; margin-bottom:5px; }
+  #kgx-explorer .kgx-suggchips { display:flex; flex-wrap:wrap; gap:6px; }
+  #kgx-explorer .kgx-relchip { font-size:11.5px; padding:4px 10px; border-radius:999px; cursor:pointer; border:1px solid transparent; }
+  #kgx-explorer .kgx-rel-관련 { background:#f1f5f9; color:#475569; border-color:#e2e8f0; }
+  #kgx-explorer .kgx-rel-상위 { background:#dbeafe; color:#1e40af; border-color:#bfdbfe; }
+  #kgx-explorer .kgx-rel-하위 { background:#ede9fe; color:#5b21b6; border-color:#ddd6fe; }
+  #kgx-explorer .kgx-rel-측정대상 { background:#f3e8ff; color:#7e22ce; border-color:#e9d5ff; }
+  #kgx-explorer .kgx-rel-공시영역 { background:#d1fae5; color:#065f46; border-color:#a7f3d0; }
+  #kgx-explorer .kgx-relchip:hover { filter:brightness(.96); }
+  #kgx-explorer .kgx-autotag { font-size:10px; font-weight:700; padding:1px 6px; border-radius:4px; margin-left:4px; }
+  #kgx-explorer .kgx-autoyes { background:#0046ff; color:#fff; }
+  #kgx-explorer .kgx-autono { background:#fee2e2; color:#991b1b; }
+  #kgx-explorer .kgx-provrow { font-size:12px; color:#4b5563; margin:3px 0; }
+  #kgx-explorer .kgx-provrow b { color:#1f2937; }
+  #kgx-explorer .kgx-enginetag { font-size:10px; font-weight:700; color:#065f46; background:#d1fae5; padding:1px 7px; border-radius:4px; }
+  #kgx-explorer .kgx-noteswrap { padding:6px 16px 16px; max-height:360px; overflow-y:auto; }
+  #kgx-explorer .kgx-notecard { border:1px solid #e5e7eb; border-radius:9px; padding:11px 13px; margin-top:10px; }
+  #kgx-explorer .kgx-notecard .kgx-nctop { display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+  #kgx-explorer .kgx-cobadge { font-size:11px; font-weight:700; padding:2px 8px; border-radius:6px; color:#fff; }
+  #kgx-explorer .kgx-co-신한 { background:#0046ff; } #kgx-explorer .kgx-co-KB { background:#f59e0b; } #kgx-explorer .kgx-co-하나 { background:#00857a; } #kgx-explorer .kgx-co-우리 { background:#0067ac; }
+  #kgx-explorer .kgx-divbadge { font-size:10px; padding:2px 6px; border-radius:5px; background:#f3f4f6; color:#6b7280; font-weight:600; }
+  #kgx-explorer .kgx-nctitle { font-size:13px; font-weight:600; }
+  #kgx-explorer .kgx-ncmeta { font-size:11px; color:#9ca3af; margin-left:auto; }
+  #kgx-explorer .kgx-ncfoot { display:flex; align-items:center; gap:6px; margin-top:8px; flex-wrap:wrap; }
+  #kgx-explorer .kgx-fbbtn { font-size:12px; padding:3px 9px; border:1px solid #d1d5db; background:#fff; border-radius:7px; cursor:pointer; }
+  #kgx-explorer .kgx-fbbtn:hover { background:#f3f4f6; }
+  #kgx-explorer .kgx-fbbtn.up.on { background:#d1fae5; border-color:#6ee7b7; }
+  #kgx-explorer .kgx-fbbtn.down.on { background:#fee2e2; border-color:#fca5a5; }
+  #kgx-explorer .kgx-fbrel { margin-left:auto; font-size:11px; }
+  #kgx-explorer .kgx-fbrel select { font-size:11px; padding:3px 5px; border:1px solid #d1d5db; border-radius:6px; }
+  #kgx-explorer .kgx-queue { padding:12px 16px 16px; }
+  #kgx-explorer .kgx-queue.empty { color:#9ca3af; font-size:12.5px; text-align:center; padding:22px; }
+  #kgx-explorer .kgx-qitem { display:flex; align-items:center; gap:8px; font-size:12px; padding:8px 10px; border:1px dashed #fcd34d; background:#fffbeb; border-radius:8px; margin-top:8px; }
+  #kgx-explorer .kgx-qitem .kgx-qrel { font-weight:700; color:#92400e; }
+  #kgx-explorer .kgx-qitem .kgx-promote { margin-left:auto; font-size:11px; padding:3px 9px; background:#059669; color:#fff; border:none; border-radius:6px; cursor:pointer; }
+  #kgx-explorer .kgx-qitem .kgx-promote:hover { background:#047857; }
+  #kgx-explorer .kgx-qitem.promoted { border-style:solid; border-color:#6ee7b7; background:#ecfdf5; }
+  #kgx-explorer .kgx-qitem.promoted .kgx-qrel { color:#065f46; }
+  #kgx-explorer .kgx-footnote { font-size:11px; color:#9ca3af; margin-top:16px; line-height:1.6; }
+  #kgx-explorer .kgx-footnote b { color:#6b7280; }
 </style>
 </head>
 <body>
@@ -378,6 +476,79 @@
     </div>
     <div id="suggest-rag" class="suggest-area" data-target="rag-q"></div>
     <div id="rag-result"></div>
+
+    <!-- 통합: 회계 개념 온톨로지 · Graph-RAG 설명 가능한 검색 (kgx- 네임스페이스 격리) -->
+    <div id="kgx-explorer">
+      <div class="kgx-head">
+        <h3>🕸️ 회계 개념 온톨로지 · Graph-RAG 설명 가능한 검색</h3>
+        <span class="kgx-sub">질의 → 개념(동의어 자동병합) → 타입드 엣지 → 주석. 개념 클릭 시 위 자연어 질의로 보낼 수 있습니다.</span>
+      </div>
+      <div class="kgx-searchbar">
+        <input id="kgx-q" placeholder="회계 개념·약어로 탐색 (예: ECL, FVOCI, 파생금융상품, 위험관리)" autocomplete="off">
+        <button class="kgx-btn" onclick="kgxRunSearch()">탐색</button>
+        <button class="kgx-btn-ghost" onclick="kgxReset()">초기화</button>
+      </div>
+      <div class="kgx-quick">
+        <span class="kgx-lbl">빠른 예시:</span>
+        <span class="kgx-qchip" onclick="kgxPick('ECL')">ECL</span>
+        <span class="kgx-qchip" onclick="kgxPick('FVOCI')">FVOCI</span>
+        <span class="kgx-qchip" onclick="kgxPick('파생금융상품')">파생금융상품</span>
+        <span class="kgx-qchip" onclick="kgxPick('금융위험의 관리')">금융위험의 관리</span>
+        <span class="kgx-qchip" onclick="kgxPick('사용권자산')">사용권자산</span>
+      </div>
+
+      <div class="kgx-layout">
+        <!-- 좌: 온톨로지 그래프 -->
+        <div class="kgx-panel">
+          <div class="kgx-panelhead">
+            <h4>온톨로지 그래프</h4>
+            <div class="kgx-layertoggle" id="kgx-layerToggle">
+              <button data-layer="1" onclick="kgxSetLayer(1)">동의어층</button>
+              <button data-layer="2" onclick="kgxSetLayer(2)">+관계</button>
+              <button data-layer="3" class="active" onclick="kgxSetLayer(3)">+도메인관계</button>
+            </div>
+            <span class="kgx-hint">노드 드래그 · 클릭 = 탐색</span>
+          </div>
+          <svg id="kgx-graph" viewBox="0 0 820 580" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="kgx-legend">
+            <span><i class="kgx-lgdot" style="background:#3b82f6"></i>서술형</span>
+            <span><i class="kgx-lgdot" style="background:#f59e0b"></i>주기(정책)</span>
+            <span><i class="kgx-lgline" style="border-color:#2563eb"></i>상위/하위</span>
+            <span><i class="kgx-lgline" style="border-color:#9ca3af;border-top-style:dashed"></i>관련</span>
+            <span><i class="kgx-lgline" style="border-color:#9333ea"></i>측정대상</span>
+            <span><i class="kgx-lgline" style="border-color:#059669;border-top-style:dotted"></i>공시영역</span>
+            <span><i class="kgx-lgline" style="border-color:#f59e0b;border-top-style:dashed"></i>pending(검수대기)</span>
+          </div>
+        </div>
+
+        <!-- 우: 검색 경로 & 근거 -->
+        <div class="kgx-right">
+          <div class="kgx-panel">
+            <div class="kgx-panelhead"><h4>검색 경로 &amp; 근거 <span class="kgx-enginetag">deterministic</span></h4></div>
+            <div class="kgx-prov empty" id="kgx-prov">개념·약어를 탐색하면 온톨로지 경로와 매칭 근거가 여기에 표시됩니다.</div>
+          </div>
+
+          <div class="kgx-panel">
+            <div class="kgx-panelhead"><h4>연결된 4사 주석</h4><span class="kgx-hint" id="kgx-noteCount"></span></div>
+            <div class="kgx-noteswrap" id="kgx-notes"></div>
+          </div>
+
+          <div class="kgx-panel">
+            <div class="kgx-panelhead"><h4>피드백 → 검수 큐 (선순환)</h4><span class="kgx-hint">제안 → pending → 승격</span></div>
+            <div class="kgx-queue empty" id="kgx-queue">주석 카드의 👍/👎·"관계 제안"이 여기에 쌓이고, 승격 시 그래프에 반영됩니다.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kgx-footnote">
+        <b>설명 가능성</b> · ① 블랙박스 유사도가 아닌 <b>타입드 온톨로지 경로</b>로 "왜 이 주석인가"를 설명 ·
+        ② <b>동의어만 쿼리 자동병합</b>, 관련/상위/하위/도메인은 추천만 → 오확장 차단 ·
+        ③ 결과마다 <b>provenance(deterministic)</b> 동봉(prism-fs 안전경계) ·
+        ④ 피드백 → pending 엣지 → 검수 승격의 <b>자가개선 선순환</b>.
+        <br>※ 온톨로지 샘플은 대표 회계 개념 손제작본이며, 실제 운영 시 4사 주석 인덱스·검수표와 연동됩니다.
+      </div>
+    </div>
+
     <div class="footer-note">
       ℹ️ AI 답변(보라 박스)은 주석 텍스트 기반이며 출처 인용을 동반합니다. 숫자 재구성·단위 환산은 하지 않습니다(human-in-the-loop 검증 필요).
     </div>
@@ -707,6 +878,7 @@
     // 비교조회 탭에서만 좌우 여백 최소화(PDF 뷰어 폭 최대화).
     document.body.classList.toggle("cmp-wide", name === "compare");
     if (name === "library") loadLibrary();
+    if (name === "rag" && window.kgxOnShow) window.kgxOnShow();
     if (name === "compare") renderTargetsBar();
     if (name === "fs") loadFsTab();
     if (name === "coverage") loadInsight();
@@ -1841,6 +2013,337 @@
   loadLibrary();
   bindSuggest("query", "suggest-compare");   // 비교조회 검색박스 동의어 제안
   bindSuggest("rag-q", "suggest-rag");        // RAG 질의 검색박스 동의어 제안
+
+  // ==========================================================================
+  // 회계 개념 온톨로지 · Graph-RAG 설명 가능한 검색 (RAG 탭 통합)
+  //   - 폐쇄망: 외부 CDN 0. force-layout·렌더 전부 vanilla JS/SVG.
+  //   - 전역 충돌 차단: IIFE 격리 + 인라인 핸들러만 window.kgx* 로 노출.
+  // ==========================================================================
+  (function () {
+    // 임베드 온톨로지 — 대표 회계 개념(synonyms_data.json 주제에서 씨앗)
+    const CONCEPTS = [
+      { id:"위험관리", label:"금융상품 위험관리", kind:"주기",   aliases:["금융위험의 관리","위험관리","금융상품 위험 관리"] },
+      { id:"신용위험", label:"신용위험",          kind:"서술형", aliases:["신용리스크"] },
+      { id:"시장위험", label:"시장위험",          kind:"서술형", aliases:["시장리스크"] },
+      { id:"유동성위험", label:"유동성위험",      kind:"서술형", aliases:["유동성리스크"] },
+      { id:"대손충당금", label:"대손충당금",      kind:"서술형", aliases:["신용손실충당금","기대신용손실","대손준비금","ECL"] },
+      { id:"공정가치", label:"공정가치",          kind:"주기",   aliases:["공정가치측정","공정가치 서열체계"] },
+      { id:"FVOCI",   label:"FVOCI",             kind:"서술형", aliases:["기타포괄손익공정가치측정","매도가능금융자산"] },
+      { id:"FVTPL",   label:"FVTPL",             kind:"서술형", aliases:["당기손익공정가치측정","단기매매금융자산","FVPL"] },
+      { id:"파생상품", label:"파생상품",          kind:"서술형", aliases:["파생금융상품"] },
+      { id:"리스",     label:"리스",              kind:"서술형", aliases:["사용권자산","리스부채"] },
+      { id:"손상",     label:"손상",              kind:"서술형", aliases:["손상차손","자산손상"] },
+      { id:"영업권",   label:"영업권",            kind:"서술형", aliases:["goodwill"] },
+      { id:"확정급여", label:"확정급여",          kind:"서술형", aliases:["확정급여제도","퇴직급여"] },
+      { id:"법인세",   label:"법인세",            kind:"서술형", aliases:["법인세비용","이연법인세"] },
+      { id:"특수관계자", label:"특수관계자",      kind:"서술형", aliases:["특수관계자거래"] },
+      { id:"회계정책", label:"중요한 회계정책",   kind:"주기",   aliases:["회계정책","작성기준","유의적 회계정책"] },
+    ];
+    const EDGES = [
+      { s:"신용위험",  t:"위험관리", r:"상위" },
+      { s:"시장위험",  t:"위험관리", r:"상위" },
+      { s:"유동성위험",t:"위험관리", r:"상위" },
+      { s:"대손충당금",t:"신용위험", r:"관련" },
+      { s:"FVOCI",    t:"공정가치", r:"상위" },
+      { s:"FVTPL",    t:"공정가치", r:"상위" },
+      { s:"파생상품",  t:"공정가치", r:"측정대상" },
+      { s:"파생상품",  t:"시장위험", r:"관련" },
+      { s:"대손충당금",t:"FVOCI",   r:"측정대상" },
+      { s:"리스",      t:"유동성위험", r:"관련" },
+      { s:"영업권",    t:"손상",     r:"측정대상" },
+      { s:"대손충당금",t:"손상",     r:"관련" },
+      { s:"공정가치",  t:"회계정책", r:"공시영역" },
+      { s:"리스",      t:"회계정책", r:"공시영역" },
+      { s:"대손충당금",t:"회계정책", r:"공시영역" },
+      { s:"확정급여",  t:"회계정책", r:"공시영역" },
+      { s:"법인세",    t:"회계정책", r:"공시영역" },
+    ];
+    const COS = ["신한","KB","하나","우리"];
+    function notesFor(cid){
+      const T = {
+        위험관리:["금융상품 위험관리","금융위험의 관리"], 신용위험:["신용위험 관리","기대신용손실 측정"],
+        시장위험:["시장위험 관리","이자율·환위험"], 유동성위험:["유동성위험 관리","계약상 만기"],
+        대손충당금:["대손충당금 변동","신용손실충당금 측정"], 공정가치:["공정가치 서열체계","공정가치 측정"],
+        FVOCI:["기타포괄손익-공정가치 측정 금융자산"], FVTPL:["당기손익-공정가치 측정 금융자산"],
+        파생상품:["파생상품 및 위험회피회계","파생금융상품 평가손익"], 리스:["리스","사용권자산 및 리스부채"],
+        손상:["자산손상","영업권 손상검사"], 영업권:["영업권 및 무형자산"], 확정급여:["확정급여제도","퇴직급여부채"],
+        법인세:["법인세비용","이연법인세자산·부채"], 특수관계자:["특수관계자 거래"], 회계정책:["중요한 회계정책","재무제표 작성기준"],
+      };
+      const titles = T[cid] || ["주석"];
+      const out = [];
+      COS.forEach((co,ci)=>{
+        ["연결","별도"].forEach((d,di)=>{
+          if((ci+di+cid.length) % 5 === 0 && titles.length<2) return;  // 4사×2 변주(현실감)
+          const t = titles[(ci+di) % titles.length];
+          out.push({ co, div:d, title:t, page: 100 + ci*40 + di*15 + (cid.length%7)*3 });
+        });
+      });
+      return out;
+    }
+
+    const byId = Object.fromEntries(CONCEPTS.map(c=>[c.id,c]));
+    let LAYER = 3;
+    let pendingEdges = [];
+    let selected = null;
+    const NS = "http://www.w3.org/2000/svg";
+
+    function edgeVisible(r){
+      if(LAYER===1) return false;
+      if(LAYER===2) return (r==="관련"||r==="상위");
+      return true;
+    }
+    function activeEdges(){ return EDGES.filter(e=>edgeVisible(e.r)).concat(pendingEdges.filter(e=>e.promoted && edgeVisible(e.r))); }
+
+    // Force-directed 레이아웃 (vanilla)
+    const W=820, H=580;
+    const nodes = CONCEPTS.map((c,i)=>({ id:c.id, x: 410 + 240*Math.cos(i/CONCEPTS.length*6.283), y: 290 + 200*Math.sin(i/CONCEPTS.length*6.283), vx:0, vy:0, fixed:false }));
+    const nodeById = Object.fromEntries(nodes.map(n=>[n.id,n]));
+    let alpha = 1, ticks = 0, running = false;
+
+    function tick(){
+      running = true;
+      const allE = EDGES.concat(pendingEdges);
+      for(let i=0;i<nodes.length;i++) for(let j=i+1;j<nodes.length;j++){
+        const a=nodes[i], b=nodes[j];
+        let dx=a.x-b.x, dy=a.y-b.y, d2=dx*dx+dy*dy || 0.01, d=Math.sqrt(d2);
+        const f = 5200/d2, ux=dx/d, uy=dy/d;
+        a.vx += ux*f; a.vy += uy*f; b.vx -= ux*f; b.vy -= uy*f;
+      }
+      allE.forEach(e=>{
+        const a=nodeById[e.s], b=nodeById[e.t]; if(!a||!b) return;
+        let dx=b.x-a.x, dy=b.y-a.y, d=Math.sqrt(dx*dx+dy*dy)||0.01;
+        const f=(d-150)*0.02, ux=dx/d, uy=dy/d;
+        a.vx += ux*f; a.vy += uy*f; b.vx -= ux*f; b.vy -= uy*f;
+      });
+      nodes.forEach(n=>{
+        n.vx += (410-n.x)*0.006; n.vy += (290-n.y)*0.006;
+        if(!n.fixed){
+          n.vx*=0.82; n.vy*=0.82;
+          n.x += n.vx*alpha; n.y += n.vy*alpha;
+          n.x=Math.max(40,Math.min(W-40,n.x)); n.y=Math.max(34,Math.min(H-24,n.y));
+        } else { n.vx=0; n.vy=0; }
+      });
+      alpha *= 0.985; ticks++;
+      render();
+      if(alpha>0.02 && ticks<600) requestAnimationFrame(tick); else running=false;
+    }
+    function reheat(){ alpha=0.6; ticks=0; if(!running) requestAnimationFrame(tick); }
+
+    const svg = document.getElementById("kgx-graph");
+    function el(tag, attrs){ const e=document.createElementNS(NS,tag); for(const k in attrs) e.setAttribute(k,attrs[k]); return e; }
+
+    function render(){
+      if(!svg) return;
+      svg.innerHTML = "";
+      const defs = el("defs",{});
+      const mk = el("marker",{id:"kgx-arrow",viewBox:"0 0 10 10",refX:"22",refY:"5",markerWidth:"7",markerHeight:"7",orient:"auto-start-reverse"});
+      mk.appendChild(el("path",{d:"M0,0 L10,5 L0,10 z",fill:"#2563eb"})); defs.appendChild(mk); svg.appendChild(defs);
+
+      const hot = CURRENT;
+      activeEdges().forEach(e=>{
+        const a=nodeById[e.s], b=nodeById[e.t]; if(!a||!b) return;
+        const isHot = hot && hot.edges.has(e.s+">"+e.t);
+        const cls = "kgx-edge kgx-edge-"+e.r + (e.pending?" pending":"") + (isHot?" path-hot":"");
+        const line = el("line",{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:cls});
+        if(e.r==="상위" && !e.pending) line.setAttribute("marker-end","url(#kgx-arrow)");
+        svg.appendChild(line);
+        if((e.r==="측정대상"||e.r==="공시영역") && LAYER===3){
+          const t=el("text",{x:(a.x+b.x)/2,y:(a.y+b.y)/2-2,class:"kgx-edge-label"}); t.textContent=e.r; svg.appendChild(t);
+        }
+      });
+      CONCEPTS.forEach(c=>{
+        const n=nodeById[c.id];
+        const r = 13 + Math.min(8, notesFor(c.id).length*1.1);
+        let cls = "kgx-node kind-"+c.kind;
+        if(hot){
+          if(c.id===hot.hit) cls+=" hit pulse";
+          else if(hot.merge.has(c.id)) cls+=" merge";
+          else if(hot.neighbors.has(c.id)) cls+=" neighbor";
+          else cls+=" dim";
+        }
+        const g = el("g",{class:cls,style:"--r:"+r+"px"});
+        const circ = el("circle",{cx:n.x,cy:n.y,r:r}); circ.style.setProperty("--r",r+"px");
+        g.appendChild(circ);
+        const tx = el("text",{x:n.x,y:n.y+r+12}); tx.textContent=c.label; g.appendChild(tx);
+        const ttl = el("title",{}); ttl.textContent = c.label + (c.aliases.length?" · 동의어: "+c.aliases.join(", "):""); g.appendChild(ttl);
+        g.addEventListener("mousedown", ev=>startDrag(ev,n));
+        g.addEventListener("click", ()=>{ if(!dragged){ setQ(c.label); doSearch(); } });
+        svg.appendChild(g);
+      });
+    }
+
+    // 검색 (Graph-RAG: 질의 → 개념(동의어 자동병합) → 타입드 엣지 → 주석)
+    function norm(s){ return (s||"").toLowerCase().replace(/[\s·\-]/g,""); }
+    function findConcept(q){
+      const nq = norm(q);
+      for(const c of CONCEPTS){
+        if(norm(c.label)===nq) return { c, via:null };
+        for(const a of c.aliases) if(norm(a)===nq) return { c, via:a };
+      }
+      for(const c of CONCEPTS){
+        if(norm(c.label).includes(nq)||nq.includes(norm(c.label))) return { c, via:null };
+        for(const a of c.aliases) if(norm(a).includes(nq)||nq.includes(norm(a))) return { c, via:a };
+      }
+      return null;
+    }
+    function neighbors(cid){
+      const out = { 관련:[], 상위:[], 하위:[], 측정대상:[], 공시영역:[] };
+      EDGES.concat(pendingEdges.filter(e=>e.promoted)).forEach(e=>{
+        if(e.s===cid){ const r=e.r; (out[r]||(out[r]=[])).push(e.t); }
+        if(e.t===cid){ if(e.r==="상위") out["하위"].push(e.s); else if(e.r==="관련") out["관련"].push(e.s); else (out[e.r]||(out[e.r]=[])).push(e.s); }
+      });
+      return out;
+    }
+    let CURRENT = null;
+
+    function getQ(){ const i=document.getElementById("kgx-q"); return i? i.value.trim() : ""; }
+    function setQ(v){ const i=document.getElementById("kgx-q"); if(i) i.value=v; }
+
+    function doSearch(){
+      const q = getQ();
+      const prov = document.getElementById("kgx-prov");
+      if(!q){ doReset(); return; }
+      const found = findConcept(q);
+      if(!found){
+        CURRENT=null; selected=null; render();
+        prov.className="kgx-prov empty"; prov.textContent='"'+q+'" 에 대응하는 개념을 온톨로지에서 찾지 못했습니다.';
+        document.getElementById("kgx-notes").innerHTML=""; document.getElementById("kgx-noteCount").textContent="";
+        return;
+      }
+      const c = found.c; selected=c.id;
+      const nb = neighbors(c.id);
+      const mergeSet = new Set();
+      const neighSet = new Set([].concat(nb.관련,nb.상위,nb.하위,nb.측정대상,nb.공시영역));
+      const edgeSet = new Set();
+      EDGES.concat(pendingEdges.filter(e=>e.promoted)).forEach(e=>{ if(e.s===c.id||e.t===c.id) edgeSet.add(e.s+">"+e.t); });
+      CURRENT = { hit:c.id, merge:mergeSet, neighbors:neighSet, edges:edgeSet };
+      render();
+
+      let html = "";
+      if(found.via){
+        html += '<div class="kgx-mergenote">🔗 <b>동의어 자동병합</b><span class="kgx-autotag kgx-autoyes">쿼리 병합 O</span><br>질의 <b>"'+found.via+'"</b> ⇒ 정규개념 <b>"'+c.label+'"</b> (BM25 쿼리에 자동 확장)</div>';
+      } else {
+        html += '<div class="kgx-mergenote">🎯 질의가 정규개념 <b>"'+c.label+'"</b> 에 직접 매칭</div>';
+      }
+      const order = ["관련","상위","하위","측정대상","공시영역"];
+      const visRel = r => LAYER===3 ? true : (LAYER===2 ? (r==="관련"||r==="상위"||r==="하위") : false);
+      let anySugg=false;
+      let sugg = '<div class="kgx-suggblock"><div class="kgx-sl">관련 개념 추천 <span class="kgx-autotag kgx-autono">쿼리 병합 X · 추천만</span></div><div class="kgx-suggchips">';
+      order.forEach(r=>{
+        if(!visRel(r)) return;
+        (nb[r]||[]).forEach(tid=>{
+          anySugg=true;
+          sugg += '<span class="kgx-relchip kgx-rel-'+r+'" onclick="kgxPick(\''+ (byId[tid]?byId[tid].label:tid) +'\')">'+(byId[tid]?byId[tid].label:tid)+' <small>('+r+')</small></span>';
+        });
+      });
+      sugg += '</div></div>';
+      if(anySugg) html += sugg;
+
+      html += '<div class="kgx-provrow"><b>매칭 경로</b>: 질의 → '+(found.via?'동의어 \''+found.via+'\' → ':'')+'개념 \''+c.label+'\' → 타입드 엣지 → 주석</div>';
+      html += '<div class="kgx-provrow"><b>note_kind</b>: '+c.kind+' · <b>engine</b>: deterministic (온톨로지 traversal, AI 무경유)</div>';
+      html += '<div class="kgx-provrow"><b>신뢰도</b>: '+(found.via?'high (동의어 검증됨)':'high (정규개념 직접)')+'</div>';
+      html += '<div class="kgx-provrow" style="margin-top:8px;"><button class="kgx-btn-ghost" onclick="kgxToRag(\''+c.label+'\')">↑ 이 개념으로 자연어 질의</button></div>';
+      prov.className="kgx-prov"; prov.innerHTML=html;
+
+      renderNotes(c);
+    }
+
+    function renderNotes(c){
+      const list = notesFor(c.id);
+      document.getElementById("kgx-noteCount").textContent = list.length+"건 · "+c.label;
+      const wrap = document.getElementById("kgx-notes");
+      const viaTxt = (getQ() && norm(getQ())!==norm(c.label)) ? ' (동의어 경유)' : '';
+      wrap.innerHTML = list.map(n=>(
+        '<div class="kgx-notecard">'+
+          '<div class="kgx-nctop"><span class="kgx-cobadge kgx-co-'+n.co+'">'+n.co+'</span>'+
+            '<span class="kgx-divbadge">'+n.div+'</span>'+
+            '<span class="kgx-nctitle">'+n.title+'</span>'+
+            '<span class="kgx-ncmeta">p.'+n.page+'</span></div>'+
+          '<div class="kgx-provrow" style="font-size:11px">매칭: 개념 \''+c.label+'\''+viaTxt+' · '+c.kind+'</div>'+
+          '<div class="kgx-ncfoot">'+
+            '<button class="kgx-fbbtn up" onclick="kgxFbVote(this)">👍 맞음</button>'+
+            '<button class="kgx-fbbtn down" onclick="kgxFbVote(this)">👎 아님</button>'+
+            '<span class="kgx-fbrel">관계 제안: '+
+              '<select class="kgx-fbrel-t">'+CONCEPTS.filter(x=>x.id!==c.id).map(x=>'<option value="'+x.id+'">'+x.label+'</option>').join('')+'</select> '+
+              '<select class="kgx-fbrel-r"><option>관련</option><option>상위</option><option>측정대상</option><option>공시영역</option></select> '+
+              '<button class="kgx-fbbtn" onclick="kgxFbPropose(this,\''+c.id+'\')">제안</button>'+
+            '</span>'+
+          '</div>'+
+        '</div>'
+      )).join("");
+    }
+
+    // 피드백 → 검수 큐 → 승격 (선순환)
+    function renderQueue(){
+      const q = document.getElementById("kgx-queue");
+      if(!pendingEdges.length){ q.className="kgx-queue empty"; q.textContent='주석 카드의 👍/👎·"관계 제안"이 여기에 쌓이고, 승격 시 그래프에 반영됩니다.'; return; }
+      q.className="kgx-queue";
+      q.innerHTML = pendingEdges.map((e,i)=>(
+        '<div class="kgx-qitem'+(e.promoted?' promoted':'')+'">'+
+          '<span>'+(byId[e.s]?byId[e.s].label:e.s)+' <span class="kgx-qrel">—'+e.r+'→</span> '+(byId[e.t]?byId[e.t].label:e.t)+'</span>'+
+          (e.promoted ? '<span style="margin-left:auto;color:#065f46;font-weight:700">✓ active 승격됨</span>'
+                      : '<button class="kgx-promote" onclick="kgxPromote('+i+')">검수 승격</button>')+
+        '</div>'
+      )).join("");
+    }
+
+    function doReset(){
+      setQ(""); CURRENT=null; selected=null;
+      const prov=document.getElementById("kgx-prov");
+      prov.className="kgx-prov empty";
+      prov.textContent="개념·약어를 탐색하면 온톨로지 경로와 매칭 근거가 여기에 표시됩니다.";
+      document.getElementById("kgx-notes").innerHTML=""; document.getElementById("kgx-noteCount").textContent=""; render();
+    }
+
+    // 드래그
+    let dragNode=null, dragged=false;
+    function startDrag(ev,n){ dragNode=n; dragged=false; n.fixed=true; svg.classList.add("grabbing"); ev.preventDefault(); }
+    function svgPoint(ev){ const r=svg.getBoundingClientRect(); return { x:(ev.clientX-r.left)/r.width*W, y:(ev.clientY-r.top)/r.height*H }; }
+    if(svg){
+      svg.addEventListener("mousemove", ev=>{ if(!dragNode) return; dragged=true; const pt=svgPoint(ev); dragNode.x=pt.x; dragNode.y=pt.y; render(); });
+      const kgxQ=document.getElementById("kgx-q");
+      if(kgxQ) kgxQ.addEventListener("keydown", e=>{ if(e.key==="Enter") doSearch(); });
+    }
+    window.addEventListener("mouseup", ()=>{ if(dragNode){ dragNode.fixed=false; dragNode=null; svg.classList.remove("grabbing"); reheat(); setTimeout(()=>dragged=false,50);} });
+
+    // 인라인 핸들러 노출 (window.kgx*)
+    window.kgxRunSearch = doSearch;
+    window.kgxReset = doReset;
+    window.kgxPick = function(q){ setQ(q); doSearch(); };
+    window.kgxSetLayer = function(l){
+      LAYER=l;
+      document.querySelectorAll("#kgx-layerToggle button").forEach(b=>b.classList.toggle("active", +b.dataset.layer===l));
+      if(selected){ doSearch(); } else render();
+    };
+    window.kgxFbVote = function(btn){
+      const card = btn.closest(".kgx-notecard");
+      card.querySelectorAll(".kgx-fbbtn.up,.kgx-fbbtn.down").forEach(b=>b.classList.remove("on"));
+      btn.classList.add("on");
+    };
+    window.kgxFbPropose = function(btn, srcId){
+      const wrap = btn.closest(".kgx-fbrel");
+      const tId = wrap.querySelector(".kgx-fbrel-t").value;
+      const r = wrap.querySelector(".kgx-fbrel-r").value;
+      if(srcId===tId) return;
+      pendingEdges.push({ s:srcId, t:tId, r:r, pending:true, promoted:false });
+      renderQueue(); render();
+      btn.textContent="제안됨"; btn.disabled=true;
+    };
+    window.kgxPromote = function(i){
+      pendingEdges[i].promoted = true; pendingEdges[i].pending = false;
+      renderQueue(); render(); reheat();
+      if(selected){ setQ(byId[selected].label); doSearch(); }
+    };
+    // 브리지: 온톨로지 개념 → 상단 자연어 질의 입력란으로 전달
+    window.kgxToRag = function(label){
+      const r=document.getElementById("rag-q");
+      if(r){ r.value=label; r.focus(); r.scrollIntoView({behavior:"smooth", block:"center"}); }
+    };
+    // RAG 탭 진입 시 그래프 재가열(레이아웃 안정화)
+    window.kgxOnShow = function(){ reheat(); };
+
+    requestAnimationFrame(tick);  // 최초 레이아웃 시작
+  })();
 </script>
 </body>
 </html>
