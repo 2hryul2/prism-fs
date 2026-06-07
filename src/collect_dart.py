@@ -463,6 +463,48 @@ def pick_review_doc(docs) -> Optional[dict]:
     return _pick_doc_by_priority(docs, _REVIEW_TITLE_PRIORITY)
 
 
+# 검토/감사 보고서 공통 본문 키워드. 별도/연결 양쪽 picker 가 공유한다.
+_REVIEW_BODY_KEYWORDS: Tuple[str, ...] = ("검토보고서", "감사보고서")
+
+
+def pick_review_doc_consolidated(docs) -> Optional[dict]:
+    """연결(consolidated) 검토/감사보고서 1건 선택.
+
+    조건: title 에 '연결' 포함 AND ('검토보고서'|'감사보고서') 포함 AND url 존재.
+    실측 title 예: '분기연결검토보고서' / '반기연결검토보고서'.
+    먼저 등장한 매칭 행을 택한다. 없으면 None.
+
+    참고: 기존 pick_review_doc 는 '연결검토보고서'를 1순위로 두므로, 연결검토보고서가
+    첨부된 라이브 케이스에서는 이 picker 와 동일한 행을 선택한다(기존 review 선택 보존).
+    """
+    rows = _normalize_doc_rows(docs)
+    for title, url in rows:
+        if not url:
+            continue
+        if "연결" in title and any(k in title for k in _REVIEW_BODY_KEYWORDS):
+            return {"title": title, "url": url}
+    return None
+
+
+def pick_review_doc_separate(docs) -> Optional[dict]:
+    """별도(separate) 검토/감사보고서 1건 선택.
+
+    조건: title 에 ('검토보고서'|'감사보고서') 포함 AND '연결' **미포함** AND url 존재.
+    '연결' 토큰은 consolidated picker 와 상호배타 — 동일 행을 양쪽이 동시에 고를 수 없다.
+    실측 title 예: '분기검토보고서' / '반기검토보고서'.
+    먼저 등장한 매칭 행을 택한다. 없으면 None.
+    """
+    rows = _normalize_doc_rows(docs)
+    for title, url in rows:
+        if not url:
+            continue
+        if "연결" in title:
+            continue
+        if any(k in title for k in _REVIEW_BODY_KEYWORDS):
+            return {"title": title, "url": url}
+    return None
+
+
 def pick_report_pdf(files: dict) -> Optional[Tuple[str, str]]:
     """attach_files(rcept_no) 결과 dict{파일명: url}에서 본문 보고서 PDF 1건 선택.
 
@@ -536,14 +578,22 @@ def download_attachment(url: str, dest_path: Path) -> bool:
     return False
 
 
-def fetch_review_attachment(odr, rcept_no: str, dest_dir: Path) -> Optional[dict]:
-    """분기검토/연결검토보고서 첨부(표시용 PDF)를 OpenDartReader 2단계로 수집.
+def _fetch_attachment_pdf(odr, rcept_no: str, dest_dir: Path, picker,
+                          out_name: str, doc_type: str,
+                          prefetched_docs=None,
+                          exclude_url: Optional[str] = None) -> Optional[dict]:
+    """검토/별도검토보고서 첨부(표시용 PDF)를 OpenDartReader 2단계로 수집하는 공통 본체.
 
     경로(라이브 검증됨):
-      1) odr.attach_docs(rcept_no) → DataFrame[title,url]. 검토보고서 후보 선택.
-      2) odr.attach_files(후보 url) → dict{파일명: pdf_url}. .pdf 키 우선.
-      3) odr.download(pdf_url, dest/"review.pdf").
-    저장 후 매직넘버(%PDF-) 검증. PDF 가 아니면 review.raw 로 보존(display_ok=False).
+      1) attach_docs(rcept_no) → [title,url] 행. picker 로 후보 선택.
+         (prefetched_docs 가 주어지면 네트워크 재호출 없이 그 rows 를 사용.)
+      2) attach_files(후보 url) → dict{파일명: pdf_url}. .pdf 키 우선.
+      3) download_attachment(pdf_url, dest/out_name).
+    저장 후 매직넘버(%PDF-) 검증. PDF 면 dest/out_name 으로 복제(원본 보존),
+    아니면 원본만 보존(display_ok=False).
+
+    exclude_url: 후보의 attach_files 가 해석한 다운로드 URL 이 이 값과 동일하면
+    None 반환(연결 review 와 같은 첨부를 별도로 중복 저장하지 않기 위함 — 중복 방지).
 
     보안: OpenDartReader 내부 예외 메시지/URL 에는 키가 섞일 수 있으므로
     예외는 type(e).__name__ 만 로깅한다. 모든 실패는 경고 후 None 반환 —
@@ -553,19 +603,25 @@ def fetch_review_attachment(odr, rcept_no: str, dest_dir: Path) -> Optional[dict
         odr: OpenDartReader 인스턴스(run_live 에서 1회 생성).
         rcept_no: 대상 보고서 접수번호.
         dest_dir: 저장 디렉토리(회사×기간 셀).
+        picker: attach_docs 정규화 행에서 후보 1건을 고르는 함수.
+        out_name: 앱 내부용 표준 파일명(예: 'review.pdf' / 'review_sep.pdf').
+        doc_type: 반환 dict 의 doc_type 값(예: 'review' / 'review_sep').
+        prefetched_docs: 이미 확보한 attach_docs rows(중복 네트워크 회피용). None 이면 직접 호출.
+        exclude_url: 이 다운로드 URL 과 동일하면 None 반환(중복 방지).
     Returns:
-        성공 시 {doc_type, file, filename_dart, source_type, display_ok, mime?} dict,
-        후보 없음/실패 시 None.
+        성공 시 {doc_type, file, filename_original, filename_dart, source_type,
+        display_ok, mime?, pdf_url} dict, 후보 없음/중복/실패 시 None.
     """
+    log = f"[_fetch_attachment_pdf:{doc_type}]"
     if odr is None or not rcept_no:
         return None
     try:
-        # 1) 첨부문서 목록 → 검토보고서 후보 선택
-        docs = odr.attach_docs(rcept_no)
-        cand = pick_review_doc(docs)
+        # 1) 첨부문서 목록 → picker 로 후보 선택. prefetched 있으면 재호출 안 함.
+        docs = prefetched_docs if prefetched_docs is not None else odr.attach_docs(rcept_no)
+        cand = picker(docs)
         if cand is None:
-            print(f"[fetch_review_attachment] rcept_no={rcept_no} 검토보고서 후보 없음 "
-                  f"(review 미수집, 정상)", file=sys.stderr)
+            print(f"{log} rcept_no={rcept_no} 후보 없음 ({doc_type} 미수집, 정상)",
+                  file=sys.stderr)
             return None
 
         # 2) 후보 문서의 다운로드 첨부파일(dict{파일명: url}) → pdf_url 선택.
@@ -578,8 +634,8 @@ def fetch_review_attachment(odr, rcept_no: str, dest_dir: Path) -> Optional[dict
                 break
             time.sleep(1.5 * (attempt + 1))  # 1.5s, 3.0s 백오프
         if not files:
-            print(f"[fetch_review_attachment] rcept_no={rcept_no} 첨부파일 없음 "
-                  f"(title={cand['title']}, 3회 재시도 후) — review 스킵", file=sys.stderr)
+            print(f"{log} rcept_no={rcept_no} 첨부파일 없음 "
+                  f"(title={cand['title']}, 3회 재시도 후) — {doc_type} 스킵", file=sys.stderr)
             return None
         # .pdf 키 우선, 없으면 첫 항목.
         pdf_name = next((k for k in files if k.lower().endswith(".pdf")), None)
@@ -587,47 +643,107 @@ def fetch_review_attachment(odr, rcept_no: str, dest_dir: Path) -> Optional[dict
             pdf_name = next(iter(files))
         pdf_url = files[pdf_name]
 
+        # 중복 방지: 연결 review 와 동일 첨부 URL 이면 별도로 다시 저장하지 않는다.
+        if exclude_url is not None and pdf_url == exclude_url:
+            print(f"{log} rcept_no={rcept_no} 연결 review 와 동일 첨부 URL — "
+                  f"{doc_type} 중복 스킵", file=sys.stderr)
+            return None
+
         # 3) 다운로드 → R2: DART 원본 파일명 그대로 저장(수정/삭제 금지). 재시도.
         dest_dir.mkdir(parents=True, exist_ok=True)
-        orig_name = safe_original_name(pdf_name, "review_original.pdf")
+        orig_name = safe_original_name(pdf_name, f"{doc_type}_original.pdf")
         orig_path = dest_dir / orig_name
         # OpenDartReader.download 는 pdf.do URL 에서 빈 파일을 쓰는 사례가 있어 직접 GET 사용.
         if not download_attachment(pdf_url, orig_path):
-            print(f"[fetch_review_attachment] rcept_no={rcept_no} 다운로드 실패 "
-                  f"(title={cand['title']}, 3회 재시도 후) — review 스킵", file=sys.stderr)
+            print(f"{log} rcept_no={rcept_no} 다운로드 실패 "
+                  f"(title={cand['title']}, 3회 재시도 후) — {doc_type} 스킵", file=sys.stderr)
             return None
 
-        # 4) 매직넘버 검증 — PDF 면 앱 내부용 review.pdf 로 복제(원본 보존), 아니면 폴백
+        # 4) 매직넘버 검증 — PDF 면 앱 내부용 표준본으로 복제(원본 보존), 아니면 폴백
         head = _read_head(orig_path, 5)
         if is_pdf_bytes(head):
-            out_pdf = dest_dir / "review.pdf"
-            shutil.copy2(orig_path, out_pdf)  # 원본 미삭제 — review.pdf 는 복제본
+            out_pdf = dest_dir / out_name
+            shutil.copy2(orig_path, out_pdf)  # 원본 미삭제 — 표준본은 복제본
             return {
-                "doc_type": "review",
-                "file": "review.pdf",
+                "doc_type": doc_type,
+                "file": out_name,
                 "filename_original": orig_name,
                 "filename_dart": cand["title"],
                 "source_type": "slim",
                 "display_ok": True,
+                "pdf_url": pdf_url,
             }
-        # 비PDF — 표시용으로 못 씀. 원본은 그대로 보존(review.pdf 미생성).
+        # 비PDF — 표시용으로 못 씀. 원본은 그대로 보존(표준본 미생성).
         mime = "application/zip" if head[:2] == b"PK" else "application/octet-stream"
-        print(f"[fetch_review_attachment] rcept_no={rcept_no} 비PDF 첨부 - "
-              f"원본({orig_name}) 보존, review.pdf 미생성(첫바이트={head!r}, mime={mime})", file=sys.stderr)
+        print(f"{log} rcept_no={rcept_no} 비PDF 첨부 - "
+              f"원본({orig_name}) 보존, {out_name} 미생성(첫바이트={head!r}, mime={mime})",
+              file=sys.stderr)
         return {
-            "doc_type": "review",
+            "doc_type": doc_type,
             "file": orig_name,
             "filename_original": orig_name,
             "filename_dart": cand["title"],
             "source_type": "slim",
             "display_ok": False,
             "mime": mime,
+            "pdf_url": pdf_url,
         }
     except Exception as e:
         # 보안: OpenDartReader 예외 메시지는 키 포함 URL 을 노출할 수 있음 → 타입명만.
-        print(f"[fetch_review_attachment] rcept_no={rcept_no} 검토보고서 수집 실패 "
-              f"({type(e).__name__}) — review 스킵, 기존 수집은 계속.", file=sys.stderr)
+        print(f"{log} rcept_no={rcept_no} {doc_type} 수집 실패 "
+              f"({type(e).__name__}) — {doc_type} 스킵, 기존 수집은 계속.", file=sys.stderr)
         return None
+
+
+def fetch_review_attachment(odr, rcept_no: str, dest_dir: Path,
+                            prefetched_docs=None) -> Optional[dict]:
+    """연결(consolidated) 검토/감사보고서 첨부(표시용 PDF) 수집 — _fetch_attachment_pdf 래퍼.
+
+    기존 계약 보존: 성공 시 review.pdf 로 복제, 반환 dict 의 doc_type='review',
+    file='review.pdf'. picker 만 연결 전용(pick_review_doc_consolidated)으로 전환했으며,
+    연결검토보고서가 첨부된 라이브 케이스에서 기존 pick_review_doc 와 동일 행을 선택한다.
+
+    Args:
+        odr: OpenDartReader 인스턴스(run_live 에서 1회 생성).
+        rcept_no: 대상 보고서 접수번호.
+        dest_dir: 저장 디렉토리(회사×기간 셀).
+        prefetched_docs: 이미 확보한 attach_docs rows(중복 네트워크 회피). None 이면 직접 호출.
+    Returns:
+        성공 시 {doc_type, file, filename_original, filename_dart, source_type,
+        display_ok, mime?, pdf_url} dict, 후보 없음/실패 시 None.
+    """
+    return _fetch_attachment_pdf(
+        odr, rcept_no, dest_dir,
+        picker=pick_review_doc_consolidated,
+        out_name="review.pdf", doc_type="review",
+        prefetched_docs=prefetched_docs,
+    )
+
+
+def fetch_review_sep_attachment(odr, rcept_no: str, dest_dir: Path,
+                                prefetched_docs=None,
+                                exclude_url: Optional[str] = None) -> Optional[dict]:
+    """별도(separate) 검토/감사보고서 첨부(표시용 PDF) 수집 — _fetch_attachment_pdf 래퍼.
+
+    picker=pick_review_doc_separate('연결' 미포함), out=review_sep.pdf, doc_type=review_sep.
+    exclude_url 로 연결 review 와 동일 첨부 URL 이면 None(중복 방지).
+
+    Args:
+        odr: OpenDartReader 인스턴스.
+        rcept_no: 대상 보고서 접수번호.
+        dest_dir: 저장 디렉토리.
+        prefetched_docs: 이미 확보한 attach_docs rows(중복 네트워크 회피).
+        exclude_url: 연결 review 의 첨부 URL — 동일하면 None 반환.
+    Returns:
+        성공 시 review_sep 문서 dict, 후보 없음/중복/실패 시 None.
+    """
+    return _fetch_attachment_pdf(
+        odr, rcept_no, dest_dir,
+        picker=pick_review_doc_separate,
+        out_name="review_sep.pdf", doc_type="review_sep",
+        prefetched_docs=prefetched_docs,
+        exclude_url=exclude_url,
+    )
 
 
 def fetch_report_attachment(odr, rcept_no: str, dest_dir: Path,
@@ -974,15 +1090,36 @@ def collect_company(client, api_key: str, company: str, corp_code: str,
         except Exception as e:
             print(f"[collect_company] {company} document 스킵 - {e}", file=sys.stderr)
 
-    # 6) 검토보고서(표시용 PDF) 첨부 수집 — OpenDartReader 2단계. 실패해도 None 반환(무회귀).
-    review = fetch_review_attachment(odr, rcept_no, d) if (odr and rcept_no) else None
+    # 6) 검토보고서(연결/별도) 첨부 수집 — OpenDartReader 2단계. 실패해도 None(무회귀).
+    #    attach_docs 는 두 picker 가 공유하므로 1회만 호출해 prefetched_docs 로 넘긴다
+    #    (네트워크 중복 회피). odr/rcept_no 없으면 양쪽 스킵.
+    review = None
+    review_sep = None
+    if odr and rcept_no:
+        try:
+            attach_docs_rows = odr.attach_docs(rcept_no)
+        except Exception as e:
+            # 보안: 예외 메시지에 키 포함 URL 노출 가능 → 타입명만. 양쪽 스킵, 기존 수집은 계속.
+            print(f"[collect_company] {company} attach_docs 실패 "
+                  f"({type(e).__name__}) — review/review_sep 스킵.", file=sys.stderr)
+            attach_docs_rows = None
+        if attach_docs_rows is not None:
+            review = fetch_review_attachment(odr, rcept_no, d,
+                                             prefetched_docs=attach_docs_rows)
+            # 별도는 연결 review 와 동일 첨부 URL 이면 중복 저장하지 않는다(exclude_url).
+            review_sep = fetch_review_sep_attachment(
+                odr, rcept_no, d,
+                prefetched_docs=attach_docs_rows,
+                exclude_url=(review or {}).get("pdf_url"),
+            )
 
     # 7) 본문 보고서(표시용 PDF) 첨부 수집 — opt-in(collect_report). 무클로버.
     report_attach = (fetch_report_attachment(odr, rcept_no, d)
                      if (collect_report and odr and rcept_no) else None)
     report_pdf_ok = bool(report_attach and report_attach.get("display_ok"))
 
-    # documents[]: 제출원문(report) + (성공 시)검토보고서(review). 기존 meta 키는 모두 유지(하위호환).
+    # documents[]: 제출원문(report) + (성공 시)검토보고서(review)·별도검토보고서(review_sep).
+    # 기존 meta 키는 모두 유지(하위호환).
     report_doc = {
         "doc_type": "report",
         "source": "opendart document.xml",
@@ -993,9 +1130,16 @@ def collect_company(client, api_key: str, company: str, corp_code: str,
     if report_attach:
         report_doc["filename_dart"] = report_attach.get("filename_dart")
         report_doc["display_ok"] = report_attach.get("display_ok")
+        # 요구③: report 본문 PDF 의 DART 원본 파일명 기록(pick_report_pdf 가 고른 파일명).
+        report_doc["filename_original"] = report_attach.get("filename_original")
     documents: List[dict] = [report_doc]
+    # pdf_url 은 내부 중복판정용 — meta.json documents[] 계약에서 제외(append 전에 제거).
     if review:
+        review.pop("pdf_url", None)
         documents.append(review)
+    if review_sep:
+        review_sep.pop("pdf_url", None)  # review_sep 도 filename_original 포함(요구③)
+        documents.append(review_sep)
 
     meta = {
         "company": company,
@@ -1015,6 +1159,7 @@ def collect_company(client, api_key: str, company: str, corp_code: str,
         # 문서 묶음: report(제출원문) + review(검토보고서, 성공 시). Step B(main.py) 가 소비.
         "documents": documents,
         "review_collected": bool(review),
+        "review_sep_collected": bool(review_sep),
         "report_collected": report_pdf_ok,
     }
     (d / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2),
@@ -1259,6 +1404,46 @@ def run_self_test() -> int:
         ok_r2 = pick_report_pdf(files_r2) is None
         print(f"    (b) zip 만 → None: {'OK' if ok_r2 else 'FAIL'}")
         if not ok_r2:
+            fails += 1
+    except Exception as e:
+        print(f"    FAIL: {e}"); fails += 1
+
+    # 5c) 연결/별도 검토보고서 picker — 상호배타(실측 title)
+    print("\n[5c] 연결/별도 검토보고서 picker (연결∋'연결', 별도∌'연결')")
+    try:
+        # (a) 연결+별도 동시 첨부 → 두 picker 가 서로 다른 올바른 행 선택
+        docs_both = [
+            {"title": "[신한지주]분기보고서(2025.11.14)", "url": "u_report"},
+            {"title": "[신한지주]분기검토보고서(2025.11.14)", "url": "u_sep"},
+            {"title": "[신한지주]분기연결검토보고서(2025.11.14)", "url": "u_conn"},
+        ]
+        pc = pick_review_doc_consolidated(docs_both)
+        ps = pick_review_doc_separate(docs_both)
+        ok_a = (pc is not None and pc["url"] == "u_conn"
+                and ps is not None and ps["url"] == "u_sep")
+        print(f"    (a) 동시첨부: 연결={pc['url'] if pc else None} "
+              f"별도={ps['url'] if ps else None} {'OK' if ok_a else 'FAIL'}")
+        if not ok_a:
+            fails += 1
+        # (b) 연결-only → separate None(오탐 0)
+        docs_conn = [
+            {"title": "[KB금융]반기보고서(2025.08)", "url": "u_report"},
+            {"title": "[KB금융]반기연결검토보고서(2025.08)", "url": "u_conn"},
+        ]
+        ok_b = (pick_review_doc_consolidated(docs_conn) is not None
+                and pick_review_doc_separate(docs_conn) is None)
+        print(f"    (b) 연결-only → 별도 None: {'OK' if ok_b else 'FAIL'}")
+        if not ok_b:
+            fails += 1
+        # (c) 별도-only → consolidated None, separate 선택
+        docs_sep = [
+            {"title": "[우리금융지주]반기보고서(2025.08)", "url": "u_report"},
+            {"title": "[우리금융지주]반기검토보고서(2025.08)", "url": "u_sep"},
+        ]
+        ok_c = (pick_review_doc_consolidated(docs_sep) is None
+                and (pick_review_doc_separate(docs_sep) or {}).get("url") == "u_sep")
+        print(f"    (c) 별도-only → 연결 None: {'OK' if ok_c else 'FAIL'}")
+        if not ok_c:
             fails += 1
     except Exception as e:
         print(f"    FAIL: {e}"); fails += 1

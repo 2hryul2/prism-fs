@@ -36,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 from contextlib import asynccontextmanager
+from urllib.parse import quote
 
 import fitz  # PyMuPDF
 import httpx
@@ -223,10 +224,10 @@ def entry_dir(company: str, period: str) -> Path:
     return LIBRARY_ROOT / validate_company(company) / validate_period(period)
 
 
-# ── doc_type 2문서 모델 ──────────────────────────────────────────────────────
-# 한 (회사,기간) 셀이 report(분기보고서)·review(검토보고서) 두 문서를 보유.
-# 모든 신규 파라미터 기본 "report" → 기존 호출·셀 동작 100% 하위호환.
-VALID_DOC_TYPES = {"report", "review"}
+# ── doc_type 3문서 모델 ──────────────────────────────────────────────────────
+# 한 (회사,기간) 셀이 report(분기보고서)·review(연결검토보고서)·review_sep(별도검토보고서)
+# 세 문서를 보유. 모든 신규 파라미터 기본 "report" → 기존 호출·셀 동작 100% 하위호환.
+VALID_DOC_TYPES = {"report", "review", "review_sep"}
 
 
 def validate_doc_type(doc_type: Optional[str]) -> str:
@@ -237,22 +238,91 @@ def validate_doc_type(doc_type: Optional[str]) -> str:
     if not doc_type:
         return "report"
     if doc_type not in VALID_DOC_TYPES:
-        raise HTTPException(400, f"알 수 없는 문서유형: {doc_type} (report|review)")
+        raise HTTPException(400, f"알 수 없는 문서유형: {doc_type} (report|review|review_sep)")
     return doc_type
 
 
 def pdf_path(company: str, period: str, doc_type: str = "report") -> Path:
-    """문서유형별 작업본 PDF 경로. report→report.pdf, review→review.pdf."""
+    """문서유형별 작업본 PDF 경로. report→report.pdf, review→review.pdf, review_sep→review_sep.pdf."""
     dt = validate_doc_type(doc_type)
-    filename = "report.pdf" if dt == "report" else "review.pdf"
+    # 3분기 명시 분기 — report/review 파일명 문자열은 기존과 불변(하위호환).
+    if dt == "report":
+        filename = "report.pdf"
+    elif dt == "review":
+        filename = "review.pdf"
+    else:  # review_sep
+        filename = "review_sep.pdf"
     return entry_dir(company, period) / filename
 
 
 def index_path(company: str, period: str, doc_type: str = "report") -> Path:
-    """문서유형별 인덱스 경로. report→index.json, review→index_review.json."""
+    """문서유형별 인덱스 경로. report→index.json, review→index_review.json, review_sep→index_review_sep.json."""
     dt = validate_doc_type(doc_type)
-    filename = "index.json" if dt == "report" else "index_review.json"
+    # 3분기 명시 분기 — report/review 인덱스 파일명은 기존과 불변(하위호환).
+    if dt == "report":
+        filename = "index.json"
+    elif dt == "review":
+        filename = "index_review.json"
+    else:  # review_sep
+        filename = "index_review_sep.json"
     return entry_dir(company, period) / filename
+
+
+# 표준 작업본 파일명 — 원본명 폴백 스캔에서 반드시 제외(표준본을 "원본"으로 오인 방지).
+_STANDARD_PDF_NAMES = {"report.pdf", "review.pdf", "review_sep.pdf"}
+
+
+def _filename_matches_doc_type(name: str, doc_type: str) -> bool:
+    """bracketed 원본 PDF 파일명이 doc_type 에 해당하는지 키워드로 판정.
+
+    - report     : 분기/반기/사업보고서 포함 & 검토·감사 미포함(본문 보고서).
+    - review      : 연결검토 포함(연결재무제표 검토보고서).
+    - review_sep  : 검토 포함 & 연결 미포함(별도재무제표 검토보고서).
+    """
+    if doc_type == "report":
+        return (("분기" in name or "반기" in name or "사업보고서" in name)
+                and "검토" not in name and "감사" not in name)
+    if doc_type == "review":
+        return "연결검토" in name
+    if doc_type == "review_sep":
+        return "검토" in name and "연결" not in name
+    return False
+
+
+def original_pdf_name(company: str, period: str, doc_type: str) -> Optional[str]:
+    """문서유형별 '원본' PDF 파일명을 추정. 없으면 None.
+
+    ① meta.json 의 documents[] 에서 doc_type 매칭 항목의 filename_original 우선.
+    ② 없으면 entry_dir 내 *.pdf 스캔 폴백(키워드 매칭). 표준 작업본(report.pdf 등)은 제외.
+    표시·다운로드용 원본명 노출 목적 — 작업본 파일명(report.pdf)을 그대로 노출하지 않기 위함.
+    """
+    dt = validate_doc_type(doc_type)
+    d = entry_dir(company, period)
+
+    # ① meta.json documents[] 우선
+    meta_path = d / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            for doc in meta.get("documents", []):
+                fn = doc.get("filename_original")
+                # 표준 작업본명(report.pdf 등)이 meta 에 잘못 들어간 경우 방어 — 폴백 스캔으로.
+                if doc.get("doc_type") == dt and fn and fn.lower() not in _STANDARD_PDF_NAMES:
+                    return fn
+        except (OSError, json.JSONDecodeError):
+            pass  # meta 손상/접근 불가 → 폴백 스캔으로 진행
+
+    # ② 디렉터리 *.pdf 스캔 폴백 — 표준 작업본 3종 제외 후 키워드 매칭.
+    try:
+        for pdf in sorted(d.glob("*.pdf")):
+            if pdf.name.lower() in _STANDARD_PDF_NAMES:
+                continue
+            if _filename_matches_doc_type(pdf.name, dt):
+                return pdf.name
+    except OSError:
+        pass  # 디렉터리 접근 불가 → None
+
+    return None
 
 
 def load_catalog() -> dict:
@@ -424,6 +494,18 @@ async def upload_to_library(
             "review_notes_count": 0,
             "review_detected_unit": None,
         }
+    elif dt == "review_sep":
+        # review_sep 업로드 → review_sep_* 필드만 갱신, report/review 필드 보존(review 분기 미러링).
+        fields = {
+            **existing,
+            "review_sep_uploaded_at": datetime.now(timezone.utc).isoformat(),
+            "review_sep_filename_original": file.filename,
+            "review_sep_pages": page_count,
+            "review_sep_size_mb": round(len(content) / (1024 * 1024), 2),
+            "review_sep_indexed": False,
+            "review_sep_notes_count": 0,
+            "review_sep_detected_unit": None,
+        }
     else:
         # report 업로드 → 기존 동작 그대로(report 필드 갱신), review_* 보존.
         fields = {
@@ -466,12 +548,24 @@ async def get_library():
     for c in matrix:
         matrix[c] = sorted(set(matrix[c]), key=period_sort_key)
 
+    # 각 엔트리에 문서유형별 원본 PDF 파일명 노출(PDF 뷰어 표시·다운로드용). 없으면 None.
+    # 카탈로그 원본은 변형하지 않고 표시용 사본에만 주입(부수효과 차단).
+    enriched = []
+    for e in cat["entries"]:
+        company, period = e["company"], e["period"]
+        enriched.append({
+            **e,
+            "report_filename_original": original_pdf_name(company, period, "report"),
+            "review_filename_original": original_pdf_name(company, period, "review"),
+            "review_sep_filename_original": original_pdf_name(company, period, "review_sep"),
+        })
+
     return {
         "matrix": matrix,
         "available_periods": sorted(periods_seen, key=period_sort_key),
         "total_files": len(cat["entries"]),
         "total_indexed": indexed_count,
-        "entries": cat["entries"],
+        "entries": enriched,
     }
 
 
@@ -832,13 +926,16 @@ def _note_chunks(doc, page_start: int, page_end: int) -> List[Dict[str, Any]]:
     return out
 
 
-def extract_notes_heuristic(pdf_path: Path):
+def extract_notes_heuristic(pdf_path: Path, default_fs_div: str = "연결"):
     """PDF 에서 주석 헤더 시퀀스를 순수 휴리스틱(정규식+단조 런)으로 추출.
 
     문서유형 자동 판별:
     - (연결)/(별도) 접미 헤더가 임계(FULL_REPORT_SUFFIX_MIN) 이상 → full_report 모드
       (접미 앵커로 연결/별도 그룹 분리 추출). 그 외 → slim 모드(현행 단조런).
 
+    default_fs_div: slim 모드에서 접미 미부착 노트에 태깅할 fs_div 기본값.
+        검토보고서는 문서 단위로 연결/별도가 고정 → 호출부(index_entry)가 doc_type 으로 결정.
+        review_sep 인덱싱 시 "별도", 그 외("연결") 기본 → report/review 동작 불변.
     AI/LLM 미사용. 반환 형식: (notes, detected_unit, source_type)
     - notes: [{"no","title","page_start","page_end","fs_div"}]
     - detected_unit: 탐지된 단위 표기(환산 없음) 또는 None
@@ -863,10 +960,11 @@ def extract_notes_heuristic(pdf_path: Path):
             else:
                 # 비표준 문서 — 단조 시퀀스 탐지 실패 시 기존 키워드 방식으로 폴백
                 notes, scan_start = _fallback_keyword_notes(doc)
-            # 슬림 검토보고서는 문서 성격상 전부 연결 주석 → fs_div="연결" 태깅
+            # 슬림 검토보고서는 문서 단위로 연결/별도 고정 → default_fs_div 로 태깅
+            # (연결검토=review→"연결", 별도검토=review_sep→"별도"). 기본값 "연결" 유지 시 기존과 동일.
             for n in notes:
                 if n.get("fs_div") is None:
-                    n["fs_div"] = "연결"
+                    n["fs_div"] = default_fs_div
 
         # Phase D: 본문-존재 검증(헤더 오탐 드롭) + 노트별 단위 태깅
         notes = _annotate_notes(doc, notes)
@@ -1005,6 +1103,18 @@ async def embed_and_write_index(company, period, doc_type, notes, detected_unit,
             "review_detected_unit": detected_unit,
             "review_indexed_at": datetime.now(timezone.utc).isoformat(),
         }
+    elif dt == "review_sep":
+        # review_sep 인덱싱 → review_sep_* 접두 필드만 갱신, report/review 필드 보존.
+        # 별도검토보고서는 연결 0/별도 N 이 정상(n_conn≈0). 별도 예외처리 없이 기존 카운트 경로 사용.
+        updates = {
+            "review_sep_indexed": True,
+            "review_sep_notes_count": len(notes),
+            "review_sep_notes_count_별도": n_sep,
+            "review_sep_notes_count_연결": n_conn,
+            "review_sep_source_type": source_type,
+            "review_sep_detected_unit": detected_unit,
+            "review_sep_indexed_at": datetime.now(timezone.utc).isoformat(),
+        }
     else:
         # report 인덱싱 → 기존 필드 그대로(하위호환), review_* 보존.
         updates = {
@@ -1037,7 +1147,9 @@ async def index_entry(company: str, period: str, doc_type: str = "report"):
 
     INDEX_STATUS[key] = {"status": "running", "progress": 0.0, "stage": "extracting"}
 
-    notes, detected_unit, source_type = extract_notes_heuristic(src_pdf)
+    # review_sep(별도검토보고서)는 slim 노트를 별도로 태깅. report/review 는 "연결" 기본 → 인덱싱 결과 불변.
+    default_fs_div = "별도" if dt == "review_sep" else "연결"
+    notes, detected_unit, source_type = extract_notes_heuristic(src_pdf, default_fs_div=default_fs_div)
     INDEX_STATUS[key]["progress"] = 0.3
 
     # LLM 보정 단계 (선택적)
@@ -1205,7 +1317,7 @@ class CompareTarget(BaseModel):
     company: str
     period: str
     # 미지정 시 "report" → 기존 호출(필드 생략) 동작·응답 불변.
-    doc_type: Optional[Literal["report", "review"]] = "report"
+    doc_type: Optional[Literal["report", "review", "review_sep"]] = "report"
     # 연결/별도 1급 차원. 동일 fs_div 끼리만 비교(연결↔연결, 별도↔별도). "all"=전체.
     fs_div: Optional[Literal["연결", "별도", "all"]] = "연결"
 
@@ -1699,8 +1811,14 @@ async def serve_pdf(company: str, period: str, doc_type: str = "report"):
     if not target_pdf.exists():
         raise HTTPException(404, "PDF를 찾을 수 없습니다.")
     # inline: 새 창(팝업) 열람 시 다운로드 대신 브라우저 PDF 뷰어로 표시(#page 이동 지원).
+    # 원본명이 있으면 filename*=UTF-8'' 로 부여(한글 파일명 안전). 없으면 기존과 동일(inline 만).
+    orig = original_pdf_name(company, period, doc_type)
+    if orig:
+        disposition = f"inline; filename*=UTF-8''{quote(orig)}"
+    else:
+        disposition = "inline"
     return FileResponse(target_pdf, media_type="application/pdf",
-                        headers={"Content-Disposition": "inline"})
+                        headers={"Content-Disposition": disposition})
 
 
 # ----------------------------------------------------------------------------
@@ -1775,10 +1893,11 @@ async def fs_cons_subtotals(company: str, period: str):
 
 
 @app.get("/api/notes/account-refs")
-async def notes_account_refs(company: str, period: str, fs_div: str = "연결", top_k: int = 2):
+async def notes_account_refs(company: str, period: str, fs_div: str = "연결", top_k: int = 2,
+                             doc_type: Literal["report", "review", "review_sep"] = "report"):
     """재무제표 핵심계정 ↔ 주석 정합 참조 — 계정명 임베딩 ↔ note title 임베딩 cosine 상위.
     숫자 자동일치 금지(후보 제시·확정은 사용자). AI 무경유(임베딩 결정론)."""
-    idx = _load_index(company, period, "report")
+    idx = _load_index(company, period, doc_type)
     if not idx:
         raise HTTPException(404, f"인덱스 없음: {company}/{period}")
     notes = [n for n in _notes_for_comparison(idx, fs_div) if "embedding" in n]
@@ -1798,7 +1917,8 @@ async def notes_account_refs(company: str, period: str, fs_div: str = "연결", 
 
 @app.get("/api/notes/topic-map")
 async def notes_topic_map(period: str, fs_div: str = "연결",
-                          companies: Optional[str] = None, note_kind: str = "전체"):
+                          companies: Optional[str] = None, note_kind: str = "전체",
+                          doc_type: Literal["report", "review", "review_sep"] = "report"):
     """§5.2 표준 주제 매핑 — 4사 주석을 canonical topic으로 분류·정렬(임베딩, AI 무경유)."""
     want = [c for c in (companies or "").split(",") if c] or list(VALID_COMPANIES)
     topics = _load_topic_dict_topics() or DEFAULT_TOPICS
@@ -1809,7 +1929,7 @@ async def notes_topic_map(period: str, fs_div: str = "연결",
         raise HTTPException(500, _safe_err(e))
     company_notes: Dict[str, list] = {}
     for c in want:
-        idx = _load_index(c, period, "report")
+        idx = _load_index(c, period, doc_type)
         if not idx:
             continue
         notes = note_filters.filter_notes(_notes_for_comparison(idx, fs_div), note_kind)
@@ -1821,7 +1941,8 @@ async def notes_topic_map(period: str, fs_div: str = "연결",
 
 @app.get("/api/notes/compare-memo")
 async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
-                             companies: Optional[str] = None, per_company: int = 1):
+                             companies: Optional[str] = None, per_company: int = 1,
+                             doc_type: Literal["report", "review", "review_sep"] = "report"):
     """§5.3 비교 메모 초안(옵트인) — 주제에 대한 4사 주석 정책·가정 차이 AI 초안.
     인용 강제: 근거(sources) 없으면 초안 생성 안 함. Ollama off=초안 없이 출처만."""
     topic = (topic or "").strip()
@@ -1835,7 +1956,7 @@ async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
     # 회사별 주제 최근접 주석 top-N 수집(인용 출처)
     sources = []
     for c in want:
-        idx = _load_index(c, period, "report")
+        idx = _load_index(c, period, doc_type)
         if not idx:
             continue
         cell = [{"company": c, "period": period, "index": idx}]
@@ -1872,7 +1993,8 @@ async def notes_compare_memo(topic: str, period: str, fs_div: str = "연결",
 async def notes_rag_query(q: str, fs_div: str = "연결",
                           companies: Optional[str] = None,
                           period: Optional[str] = None, top_k: int = 5,
-                          note_kind: str = "전체", generate: bool = True):
+                          note_kind: str = "전체", generate: bool = True,
+                          doc_type: Literal["report", "review", "review_sep"] = "report"):
     q = (q or "").strip()
     if not q:
         raise HTTPException(400, "질의가 비어 있습니다.")
@@ -1884,7 +2006,7 @@ async def notes_rag_query(q: str, fs_div: str = "연결",
         if e.get("company") in want_companies and e.get("indexed"):
             if period and e.get("period") != period:
                 continue
-            idx = _load_index(e["company"], e["period"], "report")
+            idx = _load_index(e["company"], e["period"], doc_type)
             if idx:
                 cells.append({"company": e["company"], "period": e["period"], "index": idx})
 
@@ -1943,7 +2065,8 @@ _SUGGEST_MAX_CELLS = 32
 
 @app.get("/api/terms/suggest")
 async def terms_suggest(q: str, companies: Optional[str] = None,
-                        period: Optional[str] = None, fs_div: str = "연결"):
+                        period: Optional[str] = None, fs_div: str = "연결",
+                        doc_type: Literal["report", "review", "review_sep"] = "report"):
     """검색어 동의어/관련 용어 제안(오프라인·결정론·AI 무경유).
 
     안전경계: 로컬 어휘만 — synonyms 그룹 + 인덱싱된 주석 '제목'. 외부 API·임베딩·랭킹 무관여.
@@ -1965,7 +2088,7 @@ async def terms_suggest(q: str, companies: Optional[str] = None,
             key=lambda e: (e.get("company", ""), e.get("period", "")),
         )
         for e in entries[:_SUGGEST_MAX_CELLS]:
-            idx = _load_index(e["company"], e["period"], "report")
+            idx = _load_index(e["company"], e["period"], doc_type)
             if not idx:
                 continue
             for n in _notes_for_comparison(idx, fs_div):
