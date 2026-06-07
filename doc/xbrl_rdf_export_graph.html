@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>XBRL → RDF/OWL 익스포트 그래프 (PoC 결과물 미리보기)</title>
+<style>
+  /* 폐쇄망 호환: 외부 CDN/폰트/스크립트 0 — 단일 파일 자체 완결 */
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #f5f6f8; color: #111827;
+         font-family: "Malgun Gothic", "맑은 고딕", -apple-system, system-ui, sans-serif; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 22px 20px 60px; }
+  h1 { font-size: 20px; font-weight: 800; margin: 0 0 4px; }
+  .sub { color: #6b7280; font-size: 13px; margin: 0 0 18px; }
+  .badge { display:inline-block; font-size:11px; font-weight:700; color:#3730a3;
+           background:#e0e7ff; border-radius:999px; padding:2px 9px; margin-left:6px; }
+  .card { background:#fff; border:1px solid #e5e7eb; border-radius:14px;
+          padding:16px 18px; box-shadow:0 1px 3px rgba(0,0,0,.04); margin-bottom:18px; }
+  .legend { display:flex; flex-wrap:wrap; gap:14px; font-size:12px; color:#374151; margin:6px 0 2px; }
+  .legend span { display:inline-flex; align-items:center; gap:6px; }
+  .sw { width:14px; height:14px; border-radius:4px; border:1px solid rgba(0,0,0,.15); display:inline-block; }
+  svg { width:100%; height:auto; display:block; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th, td { border:1px solid #e5e7eb; padding:6px 9px; text-align:left; }
+  th { background:#f9fafb; font-weight:700; }
+  code { background:#f3f4f6; border-radius:4px; padding:1px 5px; font-size:12px; }
+  pre { background:#0f172a; color:#e2e8f0; border-radius:10px; padding:14px 16px;
+        font-size:12px; line-height:1.55; overflow:auto; }
+  .note { font-size:12px; color:#6b7280; margin-top:10px; }
+  h2 { font-size:15px; font-weight:700; margin:0 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>XBRL → RDF/OWL 익스포트 그래프 <span class="badge">PoC 결과물 미리보기 · 미구현</span></h1>
+  <p class="sub">신한 2026Q1 · 주석 9 「파생상품」(DX819000, 연결) 롤을 RDF/OWL로 직렬화했을 때의 그래프 형태. 인라인 SVG(외부 의존 0, 폐쇄망 호환).</p>
+
+  <div class="card">
+    <div class="legend">
+      <span><i class="sw" style="background:#0046ff;"></i> DisclosureRole(주석 롤)</span>
+      <span><i class="sw" style="background:#e0e7ff;"></i> Hypercube(표)</span>
+      <span><i class="sw" style="background:#fef3c7;"></i> ObjectProperty(차원·축)</span>
+      <span><i class="sw" style="background:#dcfce7;"></i> Domain(도메인)</span>
+      <span><i class="sw" style="background:#f0fdf4;"></i> Member(멤버)</span>
+      <span><i class="sw" style="background:#ede9fe;"></i> owl:Class ⊑ LineItem(개념)</span>
+      <span><i class="sw" style="background:#fee2e2;"></i> NamedIndividual(fact/ABox)</span>
+    </div>
+
+    <svg viewBox="0 0 1200 780" role="img" aria-label="XBRL RDF/OWL 그래프">
+      <defs>
+        <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+        </marker>
+      </defs>
+      <style>
+        .edge { stroke:#94a3b8; stroke-width:1.6; fill:none; marker-end:url(#arrow); }
+        .elabel { font-size:11px; fill:#475569; }
+        .elabel rect { fill:#f5f6f8; }
+        .ntext { font-size:12px; font-weight:600; }
+        .nsub  { font-size:10.5px; font-weight:400; }
+      </style>
+
+      <!-- ===== edges (노드 뒤에 먼저 그림) ===== -->
+      <!-- R -> HC -->
+      <path class="edge" d="M196,360 L300,360"/>
+      <text class="elabel" x="200" y="352">pf:hasHypercube</text>
+      <!-- R -> LI1 -->
+      <path class="edge" d="M178,332 C235,250 250,170 300,150"/>
+      <text class="elabel" x="186" y="250">pf:hasLineItem</text>
+      <!-- R -> LI2 -->
+      <path class="edge" d="M185,345 C235,300 255,250 300,235"/>
+      <!-- HC -> AX -->
+      <path class="edge" d="M512,360 L560,360"/>
+      <text class="elabel" x="506" y="352">pf:hasDimension</text>
+      <!-- AX -> DOM -->
+      <path class="edge" d="M786,360 L832,358"/>
+      <text class="elabel" x="780" y="350">rdfs:range</text>
+      <!-- DOM -> M1 -->
+      <path class="edge" d="M1006,346 C1030,322 1035,312 1052,300"/>
+      <text class="elabel" x="1008" y="316">skos:narrower</text>
+      <!-- DOM -> M2 -->
+      <path class="edge" d="M1006,372 C1030,396 1035,408 1052,420"/>
+      <!-- F -> LI1 (rdf:type) : HC 우측을 지나 위로 -->
+      <path class="edge" d="M540,562 C560,420 540,230 510,166"/>
+      <text class="elabel" x="548" y="380">rdf:type</text>
+      <!-- F -> M1 (dimension) -->
+      <path class="edge" d="M540,600 C760,640 1000,520 1090,448"/>
+      <text class="elabel" x="720" y="636">…Axis (dimension)</text>
+      <!-- F -> R (disclosedIn) -->
+      <path class="edge" d="M300,600 C220,560 150,470 122,400"/>
+      <text class="elabel" x="150" y="520">pf:disclosedIn</text>
+
+      <!-- ===== nodes ===== -->
+      <!-- Role -->
+      <g>
+        <rect x="44" y="330" width="152" height="66" rx="9" fill="#0046ff"/>
+        <text class="ntext" x="120" y="356" text-anchor="middle" fill="#fff">pf:DX819000</text>
+        <text class="nsub"  x="120" y="372" text-anchor="middle" fill="#dbeafe">DisclosureRole</text>
+        <text class="nsub"  x="120" y="387" text-anchor="middle" fill="#fff">"9. 파생상품" · 연결</text>
+      </g>
+      <!-- LineItem 1 -->
+      <g>
+        <rect x="300" y="110" width="220" height="56" rx="9" fill="#ede9fe" stroke="#a78bfa"/>
+        <text class="ntext" x="410" y="132" text-anchor="middle" fill="#5b21b6">NotionalAmount…Explanatory</text>
+        <text class="nsub"  x="410" y="150" text-anchor="middle" fill="#6d28d9">owl:Class ⊑ pf:LineItem</text>
+      </g>
+      <!-- LineItem 2 -->
+      <g>
+        <rect x="300" y="200" width="220" height="56" rx="9" fill="#ede9fe" stroke="#a78bfa"/>
+        <text class="ntext" x="410" y="222" text-anchor="middle" fill="#5b21b6">FairValuesOfDerivatives…</text>
+        <text class="nsub"  x="410" y="240" text-anchor="middle" fill="#6d28d9">owl:Class ⊑ pf:LineItem</text>
+      </g>
+      <!-- Hypercube -->
+      <g>
+        <rect x="300" y="332" width="212" height="58" rx="9" fill="#e0e7ff" stroke="#818cf8"/>
+        <text class="ntext" x="406" y="356" text-anchor="middle" fill="#3730a3">…StatementsTable</text>
+        <text class="nsub"  x="406" y="374" text-anchor="middle" fill="#4338ca">pf:Hypercube</text>
+      </g>
+      <!-- Axis -->
+      <g>
+        <rect x="560" y="332" width="226" height="58" rx="9" fill="#fef3c7" stroke="#f59e0b"/>
+        <text class="ntext" x="673" y="356" text-anchor="middle" fill="#92400e">Consolidated…Axis</text>
+        <text class="nsub"  x="673" y="374" text-anchor="middle" fill="#b45309">owl:ObjectProperty (차원)</text>
+      </g>
+      <!-- Domain -->
+      <g>
+        <rect x="832" y="330" width="174" height="56" rx="9" fill="#dcfce7" stroke="#22c55e"/>
+        <text class="ntext" x="919" y="353" text-anchor="middle" fill="#166534">…StatementsDomain</text>
+        <text class="nsub"  x="919" y="371" text-anchor="middle" fill="#15803d">domain</text>
+      </g>
+      <!-- Member 1 -->
+      <g>
+        <rect x="1052" y="272" width="120" height="46" rx="9" fill="#f0fdf4" stroke="#86efac"/>
+        <text class="ntext" x="1112" y="292" text-anchor="middle" fill="#166534">ConsolidatedMember</text>
+        <text class="nsub"  x="1112" y="308" text-anchor="middle" fill="#15803d">"연결"</text>
+      </g>
+      <!-- Member 2 -->
+      <g>
+        <rect x="1052" y="400" width="120" height="46" rx="9" fill="#f0fdf4" stroke="#86efac"/>
+        <text class="ntext" x="1112" y="420" text-anchor="middle" fill="#166534">SeparateMember</text>
+        <text class="nsub"  x="1112" y="436" text-anchor="middle" fill="#15803d">"별도"</text>
+      </g>
+      <!-- Fact (ABox) -->
+      <g>
+        <rect x="300" y="562" width="240" height="72" rx="9" fill="#fee2e2" stroke="#ef4444"/>
+        <text class="ntext" x="420" y="586" text-anchor="middle" fill="#991b1b">pf:fact_8821</text>
+        <text class="nsub"  x="420" y="603" text-anchor="middle" fill="#b91c1c">owl:NamedIndividual</text>
+        <text class="nsub"  x="420" y="619" text-anchor="middle" fill="#7f1d1d">pf:value "12345000000" · KRW · 2026Q1</text>
+      </g>
+    </svg>
+    <p class="note">화살표 방향 = RDF 트리플의 (주어)→(목적어). 예: <code>pf:fact_8821 — rdf:type → NotionalAmount</code>, <code>pf:fact_8821 — …Axis → ConsolidatedMember</code>, <code>pf:fact_8821 — pf:disclosedIn → pf:DX819000</code>.</p>
+  </div>
+
+  <div class="card">
+    <h2>매핑 요약 (XBRL → RDF/OWL)</h2>
+    <table>
+      <tr><th>XBRL 요소</th><th>RDF/OWL 산출</th><th>이 그래프의 노드</th></tr>
+      <tr><td>roleType (DX…)</td><td><code>pf:DisclosureRole</code> 개체</td><td>pf:DX819000 (파랑)</td></tr>
+      <tr><td>hypercube(Table)</td><td><code>pf:Hypercube</code> + <code>owl:Restriction</code></td><td>…StatementsTable (남색)</td></tr>
+      <tr><td>axis(dimension)</td><td><code>owl:ObjectProperty</code></td><td>Consolidated…Axis (호박)</td></tr>
+      <tr><td>domain / member</td><td>domain + <code>skos:narrower</code> 멤버</td><td>Domain(초록) → 연결/별도(연초록)</td></tr>
+      <tr><td>concept(line item)</td><td><code>owl:Class</code> ⊑ <code>pf:LineItem</code></td><td>NotionalAmount… (보라)</td></tr>
+      <tr><td>fact(concept+context)</td><td><code>owl:NamedIndividual</code> + 차원 단언 + 값</td><td>pf:fact_8821 (빨강)</td></tr>
+    </table>
+    <p class="note">이 구조는 이미 <code>src/xbrl_tagging.py</code>의 <code>parse_def_hypercubes</code>/<code>parse_role_types</code>/<code>count_facts_dim</code>가 메모리에 구성하는 그래프와 1:1 대응합니다. 실제 익스포트는 이 자료구조를 Turtle로 직렬화하는 얇은 라이터만 추가하면 됩니다(현재 미구현).</p>
+  </div>
+
+  <div class="card">
+    <h2>참조: 동일 그래프의 Mermaid 소스</h2>
+    <pre>graph LR
+  R["pf:DX819000&#10;'9. 파생상품' 연결"]:::role
+  HC["dart:…StatementsTable&#10;(pf:Hypercube)"]:::hc
+  AX["…ConsolidatedAndSeparateFinancialStatementsAxis&#10;(owl:ObjectProperty)"]:::ax
+  DOM["…StatementsDomain"]:::dom
+  M1["ConsolidatedMember '연결'"]:::mem
+  M2["SeparateMember '별도'"]:::mem
+  LI1["NotionalAmountOfDerivatives&#10;(owl:Class ⊑ pf:LineItem)"]:::li
+  LI2["FairValuesOfDerivativeInstruments"]:::li
+  F["pf:fact_8821&#10;(owl:NamedIndividual)"]:::fact
+
+  R -- pf:hasHypercube --> HC
+  HC -- pf:hasDimension --> AX
+  AX -- rdfs:range --> DOM
+  DOM -- skos:narrower --> M1
+  DOM -- skos:narrower --> M2
+  R -- pf:hasLineItem --> LI1
+  R -- pf:hasLineItem --> LI2
+  F -- "rdf:type" --> LI1
+  F -- "…Axis" --> M1
+  F -- pf:disclosedIn --> R
+  classDef role fill:#0046ff,color:#fff;
+  classDef hc fill:#e0e7ff; classDef ax fill:#fef3c7; classDef dom fill:#dcfce7;
+  classDef mem fill:#f0fdf4; classDef li fill:#faf5ff; classDef fact fill:#fee2e2;</pre>
+    <p class="note">Mermaid 지원 뷰어(예: VS Code Markdown Preview Mermaid, GitHub)에선 위 소스를 ```mermaid 블록에 넣으면 동일 그래프가 렌더됩니다. 폐쇄망 데모 PC 대비로 본 페이지는 외부 CDN 없이 SVG로 자체 렌더합니다.</p>
+  </div>
+</div>
+</body>
+</html>
