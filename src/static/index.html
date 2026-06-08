@@ -30,7 +30,7 @@
   .matrix th, .matrix td { border: 1px solid #e5e7eb; padding: 0; text-align: center; height: 56px; }
   .matrix th { background: #f9fafb; font-weight: 700; font-size: 13px; padding: 10px; }
   .matrix th.company-col { text-align: left; padding-left: 14px; width: 110px; }
-  .matrix-cell { padding: 8px; cursor: pointer; transition: all 0.15s; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+  .matrix-cell { position: relative; padding: 8px; cursor: pointer; transition: all 0.15s; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
   .matrix-cell.filled { background: #f0fdf4; }
   .matrix-cell.filled:hover { background: #d1fae5; }
   .matrix-cell.filled.selected { background: #0046ff; color: white; }
@@ -50,6 +50,14 @@
   .doc-pill.absent:hover { border-color: #d1d5db; }
   .doc-pill .dp-label { font-weight: 600; }
   .doc-pill .dp-count { opacity: 0.8; }
+  /* 삭제 버튼 — pill 내 ✕(개별), 셀 우상단 🗑(전체). 평소 흐리게, hover 시 강조. */
+  .doc-pill .dp-del { font-size: 10px; color: #dc2626; opacity: 0; cursor: pointer; padding: 0 2px; transition: opacity 0.12s; }
+  .doc-pill:hover .dp-del { opacity: 0.7; }
+  .doc-pill .dp-del:hover { opacity: 1; font-weight: 700; }
+  .doc-pill.selected .dp-del { color: #fecaca; }
+  .cell-del { position: absolute; top: 2px; right: 4px; font-size: 11px; opacity: 0; cursor: pointer; transition: opacity 0.12s; z-index: 1; }
+  .matrix-cell:hover .cell-del { opacity: 0.55; }
+  .cell-del:hover { opacity: 1; }
   .doc-pill.indexing { background: #fef3c7; border-color: #f59e0b; }
   /* 검토보고서(review/review_sep) pill — 사업보고서(report)와 시각 구분: 옅은 보라 보더 + 위 구분선 */
   .doc-pill.review { border-color: #c4b5fd; margin-top: 4px; border-top-width: 1px; }
@@ -124,6 +132,21 @@
   .rag-subtab { padding: 9px 16px; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; font-size: 14px; font-weight: 600; color: #9ca3af; cursor: pointer; }
   .rag-subtab:hover { color: #5b21b6; }
   .rag-subtab.active { color: #5b21b6; border-bottom-color: #5b21b6; }
+  /* 업로드 PDF 자동 감지 배너 */
+  .detect-banner { margin-top: 14px; padding: 11px 14px; border-radius: 8px; font-size: 13px; line-height: 1.6; background: #eff6ff; border: 1px solid #bfdbfe; color: #1e3a8a; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .detect-banner.ok { background: #ecfdf5; border-color: #6ee7b7; color: #065f46; }
+  .detect-banner .btn-mini { padding: 5px 12px; background: #0046ff; color: #fff; border: none; border-radius: 6px; font-size: 12px; font-weight: 700; cursor: pointer; }
+  .detect-banner .btn-mini:hover { background: #0039cc; }
+  .detect-banner .detect-x { margin-left: auto; cursor: pointer; color: #6b7280; font-size: 13px; }
+  /* 자료 추가 모달 */
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(17,24,39,.45); z-index: 60; }
+  .modal { position: fixed; z-index: 61; top: 50%; left: 50%; transform: translate(-50%,-50%); width: min(720px, 92vw); max-height: 88vh; overflow: auto; background: #fff; border-radius: 12px; box-shadow: 0 12px 48px rgba(0,0,0,.35); padding: 18px 20px; }
+  .modal-head { display: flex; justify-content: space-between; align-items: center; font-size: 17px; font-weight: 700; margin-bottom: 10px; }
+  .modal-x { cursor: pointer; color: #9ca3af; font-size: 18px; }
+  .modal-subtabs { display: flex; gap: 6px; border-bottom: 1px solid #e5e7eb; margin-bottom: 14px; }
+  .modal-subtab { border: none; background: none; padding: 8px 14px; cursor: pointer; font-weight: 600; color: #6b7280; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .modal-subtab:hover { color: #047857; }
+  .modal-subtab.active { color: #047857; border-bottom-color: #047857; }
 
   .toast { position: fixed; bottom: 24px; right: 24px; background: #1f2937; color: white; padding: 12px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -286,7 +309,6 @@
 
   <div class="tabs">
     <button class="tab active" data-tab="library" onclick="showTab('library')">📚 라이브러리</button>
-    <button class="tab" data-tab="upload" onclick="showTab('upload')">⬆️ PDF 업로드</button>
     <button class="tab" data-tab="compare" onclick="showTab('compare')">🔍 주석 비교조회</button>
     <button class="tab" data-tab="rag" onclick="showTab('rag')">🤖 주석 자연어 질의 (AI 보조)</button>
     <button class="tab" data-tab="fs" onclick="showTab('fs')">📈 재무제표 비교</button>
@@ -317,33 +339,7 @@
       <button class="preset-btn" onclick="presetSameQuarterAll()">동일 분기·모든 회사</button>
       <button class="preset-btn" onclick="presetTimeSeries('신한')">신한 전 분기 추이</button>
       <button class="preset-btn" onclick="clearSelection()">선택 초기화</button>
-      <button class="preset-btn" id="add-toggle" onclick="toggleAddPanel()" style="margin-left:auto; background:#ecfdf5; border-color:#6ee7b7; color:#047857; font-weight:700;">➕ 분기/연간 자료 추가</button>
-    </div>
-
-    <!-- 인라인 자료 추가 패널(DART 수집) -->
-    <div id="add-panel" class="hidden" style="border:1px solid #6ee7b7; background:#f0fdf4; border-radius:10px; padding:14px; margin-bottom:14px;">
-      <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
-        <div class="field" style="min-width:140px;">
-          <label style="font-size:12px; color:#065f46;">회사</label>
-          <select id="add-company"><option value="ALL">📦 4사 일괄</option><option value="신한">신한금융지주</option><option value="KB">KB금융지주</option><option value="하나">하나금융지주</option><option value="우리">우리금융지주</option></select>
-        </div>
-        <div class="field" style="min-width:100px;">
-          <label style="font-size:12px; color:#065f46;">연도</label>
-          <select id="add-year"></select>
-        </div>
-        <div class="field" style="min-width:150px;">
-          <label style="font-size:12px; color:#065f46;">보고서 유형</label>
-          <select id="add-type"></select>
-        </div>
-        <div class="field">
-          <label style="font-size:12px; color:#065f46;">본문 PDF</label>
-          <label style="font-size:13px; display:flex; align-items:center; gap:6px; padding:9px 0;"><input type="checkbox" id="add-report" checked style="width:auto;"> 분기보고서 본문 포함</label>
-        </div>
-        <button class="btn" id="add-btn" onclick="doAddCollect()" style="background:#047857;">DART 수집</button>
-        <button class="preset-btn" onclick="addEmptyColumn()" title="데이터 없이 매트릭스에 빈 컬럼만 추가(셀 클릭으로 개별 수집)">빈 컬럼만 추가</button>
-      </div>
-      <p style="font-size:11px; color:#6b7280; margin-top:8px;">DART_API_KEY(.env) 필요 · 폐쇄망 데모 PC는 보유 자료 사용. 수집 후 자동 인덱싱(본문 청크). 매트릭스 빈 셀을 클릭하면 해당 셀을 바로 수집합니다.</p>
-      <div id="add-status" style="margin-top:8px;"></div>
+      <button class="preset-btn" id="add-toggle" onclick="openAddModal('collect')" style="margin-left:auto; background:#ecfdf5; border-color:#6ee7b7; color:#047857; font-weight:700;">➕ 분기/연간 자료 추가</button>
     </div>
 
     <div class="selected-bar" id="selected-bar">
@@ -357,82 +353,6 @@
     <div style="text-align:right; margin-top:16px;">
       <button class="btn" id="btn-go-compare" onclick="goCompare()" disabled>선택한 항목으로 비교 →</button>
     </div>
-  </div>
-
-  <!-- Tab: Upload -->
-  <div id="tab-upload" class="panel hidden">
-    <h2 style="font-size:17px; font-weight:700;">PDF 업로드</h2>
-    <p style="color:#6b7280; font-size:13px; margin-top:4px;">DART에서 다운로드한 PDF를 회사·기간을 지정하여 1개씩 업로드합니다. 업로드 후 자동으로 인덱싱이 시작됩니다.</p>
-
-    <div class="upload-form" style="grid-template-columns: repeat(5, 1fr) auto;">
-      <div class="field">
-        <label>회사</label>
-        <select id="up-company">
-          <option value="신한">신한금융지주</option>
-          <option value="KB">KB금융지주</option>
-          <option value="하나">하나금융지주</option>
-          <option value="우리">우리금융지주</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>연도</label>
-        <select id="up-year"></select>
-      </div>
-      <div class="field">
-        <label>기간</label>
-        <select id="up-type"></select>
-      </div>
-      <div class="field">
-        <label>문서 유형</label>
-        <select id="up-doctype">
-          <option value="report">📄 사업보고서</option>
-          <option value="review_sep">🏢 별도재무제표</option>
-          <option value="review">🔗 연결재무제표</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>PDF 파일</label>
-        <input type="file" id="up-file" accept=".pdf">
-      </div>
-      <button class="btn" id="up-btn" onclick="doUpload()">업로드 시작</button>
-    </div>
-
-    <div id="up-status" style="margin-top:16px;"></div>
-
-    <hr style="margin:28px 0; border:none; border-top:1px solid #e5e7eb;">
-
-    <h2 style="font-size:17px; font-weight:700;">DART에서 자동 수집</h2>
-    <p style="color:#6b7280; font-size:13px; margin-top:4px;">DART OpenAPI에서 분기/검토보고서 PDF·재무제표·XBRL을 자동으로 가져와 인덱싱합니다. (<code>.env</code>의 DART_API_KEY 사용 · 수동 업로드 없이 한 번에)</p>
-
-    <div class="upload-form">
-      <div class="field">
-        <label>회사</label>
-        <select id="dc-company">
-          <option value="신한">신한금융지주</option>
-          <option value="KB">KB금융지주</option>
-          <option value="하나">하나금융지주</option>
-          <option value="우리">우리금융지주</option>
-        </select>
-      </div>
-      <div class="field">
-        <label>연도</label>
-        <select id="dc-year"></select>
-      </div>
-      <div class="field">
-        <label>보고서 유형</label>
-        <select id="dc-type"></select>
-      </div>
-      <div class="field">
-        <label>본문 PDF</label>
-        <label style="font-size:13px; color:#374151; display:flex; align-items:center; gap:6px; padding:10px 0;">
-          <input type="checkbox" id="dc-report" checked style="width:auto;"> 분기보고서 본문 포함
-        </label>
-      </div>
-      <div class="field"><label>&nbsp;</label><span style="font-size:11px; color:#9ca3af; padding:10px 0;">검토보고서는 가능 시 자동 포함</span></div>
-      <button class="btn" id="dc-btn" onclick="doCollect()">DART에서 가져오기</button>
-    </div>
-
-    <div id="dc-status" style="margin-top:16px;"></div>
   </div>
 
   <!-- Tab: Compare -->
@@ -698,6 +618,82 @@
   <div id="fs-pop-body"></div>
 </div>
 
+<!-- 자료 추가 모달(DART 수집 + PDF 업로드) — 라이브러리 ➕ 버튼/빈 셀에서 호출 -->
+<div id="add-modal-backdrop" class="modal-backdrop hidden" onclick="closeAddModal()"></div>
+<div id="add-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="자료 추가">
+  <div class="modal-head"><span>분기/연간 자료 추가</span><span class="modal-x" onclick="closeAddModal()">✕</span></div>
+  <div class="modal-subtabs">
+    <button class="modal-subtab active" data-sub="collect" onclick="showAddSub('collect')">🛰️ DART 수집</button>
+    <button class="modal-subtab" data-sub="upload" onclick="showAddSub('upload')">⬆️ PDF 업로드</button>
+  </div>
+
+  <!-- 서브탭 ①: DART 자동 수집 -->
+  <div id="add-sub-collect" class="modal-body">
+    <p style="color:#6b7280; font-size:12.5px; margin-bottom:12px;">DART OpenAPI에서 분기/검토보고서 PDF·재무제표·XBRL을 자동 수집해 인덱싱합니다. (<code>.env</code> DART_API_KEY 필요)</p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;">
+      <div class="field" style="min-width:140px;">
+        <label style="font-size:12px; color:#065f46;">회사</label>
+        <select id="add-company"><option value="ALL">📦 4사 일괄</option><option value="신한">신한금융지주</option><option value="KB">KB금융지주</option><option value="하나">하나금융지주</option><option value="우리">우리금융지주</option></select>
+      </div>
+      <div class="field" style="min-width:100px;">
+        <label style="font-size:12px; color:#065f46;">연도</label>
+        <select id="add-year"></select>
+      </div>
+      <div class="field" style="min-width:150px;">
+        <label style="font-size:12px; color:#065f46;">보고서 유형</label>
+        <select id="add-type"></select>
+      </div>
+      <div class="field">
+        <label style="font-size:12px; color:#065f46;">본문 PDF</label>
+        <label style="font-size:13px; display:flex; align-items:center; gap:6px; padding:9px 0;"><input type="checkbox" id="add-report" checked style="width:auto;"> 분기보고서 본문 포함</label>
+      </div>
+      <button class="btn" id="add-btn" onclick="doAddCollect()" style="background:#047857;">DART 수집</button>
+      <button class="preset-btn" onclick="addEmptyColumn()" title="데이터 없이 매트릭스에 빈 컬럼만 추가(셀 클릭으로 개별 수집)">빈 컬럼만 추가</button>
+    </div>
+    <p style="font-size:11px; color:#6b7280; margin-top:8px;">수집 후 자동 인덱싱(본문 청크). 매트릭스 빈 셀을 클릭하면 해당 셀을 바로 수집합니다.</p>
+    <div id="add-status" style="margin-top:8px;"></div>
+  </div>
+
+  <!-- 서브탭 ②: 수동 PDF 업로드 -->
+  <div id="add-sub-upload" class="modal-body hidden">
+    <p style="color:#6b7280; font-size:12.5px; margin-bottom:12px;">DART에서 받은 PDF를 회사·기간·문서유형을 지정해 1개씩 업로드합니다. 업로드 후 자동 인덱싱. 파일 선택 시 회사/기간/문서유형을 자동 감지해 보정 제안합니다.</p>
+    <div class="upload-form" style="grid-template-columns: repeat(2, 1fr);">
+      <div class="field">
+        <label>회사</label>
+        <select id="up-company">
+          <option value="신한">신한금융지주</option>
+          <option value="KB">KB금융지주</option>
+          <option value="하나">하나금융지주</option>
+          <option value="우리">우리금융지주</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>연도</label>
+        <select id="up-year"></select>
+      </div>
+      <div class="field">
+        <label>기간</label>
+        <select id="up-type"></select>
+      </div>
+      <div class="field">
+        <label>문서 유형</label>
+        <select id="up-doctype">
+          <option value="report">📄 사업보고서</option>
+          <option value="review_sep">🏢 별도재무제표</option>
+          <option value="review">🔗 연결재무제표</option>
+        </select>
+      </div>
+      <div class="field" style="grid-column:1 / -1;">
+        <label>PDF 파일</label>
+        <input type="file" id="up-file" accept=".pdf" onchange="onUpFileChange()">
+      </div>
+      <button class="btn" id="up-btn" onclick="doUpload()" style="grid-column:1 / -1;">업로드 시작</button>
+    </div>
+    <div id="up-detect" class="detect-banner hidden"></div>
+    <div id="up-status" style="margin-top:12px;"></div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script type="module">
@@ -744,8 +740,8 @@
     el.innerHTML = PERIOD_TYPES.map(t => `<option value="${t.v}"${t.v === dflt ? " selected" : ""}>${t.ko} (${t.v})</option>`).join("");
   }
   function populatePeriodSelects() {
-    ["up-year", "dc-year", "add-year"].forEach(fillYearSelect);
-    fillTypeSelect("up-type", "Q3"); fillTypeSelect("dc-type", "Q3"); fillTypeSelect("add-type", "Q3");
+    ["up-year", "add-year"].forEach(fillYearSelect);
+    fillTypeSelect("up-type", "Q3"); fillTypeSelect("add-type", "Q3");
   }
   let SELECTED = new Set();      // "회사/기간#docType#연결|별도" (문서·fs_div 1급 축, 메모리 전용·미영속)
   let INDEX_STATUS_MAP = {};     // "회사/기간/report" -> status (인덱싱 진행상태는 report 기준)
@@ -887,7 +883,7 @@
     document.querySelectorAll(".tab").forEach(t => {
       t.classList.toggle("active", t.dataset.tab === name);
     });
-    ["library","upload","compare","rag","fs","coverage","xbrl"].forEach(n => {
+    ["library","compare","rag","fs","coverage","xbrl"].forEach(n => {
       const el = document.getElementById(`tab-${n}`);
       if (el) el.classList.toggle("hidden", n !== name);
     });
@@ -984,7 +980,8 @@
             return `<div class="doc-pill${isSel ? ' selected' : ''}${reviewCls}" title="${ttl}"
                         onclick="onDocClick('${c}','${p}','${doc}','${fd}',event)">
                       <span class="dp-label">${isSel ? '✓ ' : ''}${label}</span>
-                      <span class="dp-count">${cnt}</span></div>`;
+                      <span class="dp-count">${cnt}</span>
+                      <span class="dp-del" title="${ttl} 삭제" onclick="event.stopPropagation();deleteDoc('${c}','${p}','${doc}')">✕</span></div>`;
           }).join("") + `</div>`;
           // 재무데이터만 수집된 등록 상태 — 빈 셀과 구분되는 안내(본문 PDF 업로드 시 주석 추출).
           if (collectedOnly) {
@@ -997,7 +994,10 @@
         }
 
         const onCell = cls === "empty" ? ` onclick="onEmptyCellClick('${c}','${p}')"` : "";
-        html += `<td><div class="matrix-cell ${cls}"${onCell}>${inner}</div></td>`;
+        const cellDel = cls !== "empty"
+          ? `<span class="cell-del" title="${c} ${periodLabel(p)} 셀 전체 삭제" onclick="event.stopPropagation();deleteCell('${c}','${p}')">🗑</span>`
+          : "";
+        html += `<td><div class="matrix-cell ${cls}"${onCell}>${cellDel}${inner}</div></td>`;
       }
       html += `</tr>`;
     }
@@ -1006,13 +1006,37 @@
 
   // 빈 셀 클릭 → 라이브러리 인라인 패널을 해당 회사·기간으로 프리필+펼침(1클릭 수집)
   window.onEmptyCellClick = function(company, period) {
-    openAddPanel();
+    openAddModal('collect');
     const yr = period.slice(0, 4), tp = period.slice(4);
     const setSel = (id, v) => { const el = document.getElementById(id); if (el && [...el.options].some(o => o.value === v)) el.value = v; };
     setSel("add-company", company); setSel("add-year", yr); setSel("add-type", tp);
     EXTRA_PERIODS.add(period); saveExtraPeriods();
-    document.getElementById("add-status").innerHTML = `<div class="info-banner">${company}·${periodLabel(period)} 선택됨 — <b>[DART 수집]</b>을 누르면 이 셀을 수집합니다. (수동 업로드는 'PDF 업로드' 탭)</div>`;
-    document.getElementById("add-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+    document.getElementById("add-status").innerHTML = `<div class="info-banner">${company}·${periodLabel(period)} 선택됨 — <b>[DART 수집]</b>을 누르면 이 셀을 수집합니다. (수동 업로드는 'PDF 업로드' 서브탭)</div>`;
+  };
+
+  // 문서유형별 삭제 — 해당 PDF·인덱스만 제거, 다른 문서/재무데이터 보존.
+  window.deleteDoc = async function(company, period, docType) {
+    if (!confirm(`${company} ${periodLabel(period)} · ${DOC_FULL[docType] || "문서"} 삭제?\n(해당 PDF·인덱스·원본 사본만 제거, 다른 문서/재무데이터 유지)`)) return;
+    let res;
+    try { res = await fetch(`${API}/api/library/${encodeURIComponent(company)}/${encodeURIComponent(period)}/doc/${docType}`, { method: "DELETE" }); }
+    catch (e) { return toast(`삭제 실패: ${e}`); }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(`삭제 실패: ${d.detail || res.status}`); }
+    // 선택목록에서 해당 (회사,기간,문서) 제거.
+    [...SELECTED].forEach(k => { const s = parseSelKey(k); if (s.company === company && s.period === period && s.docType === docType) SELECTED.delete(k); });
+    toast(`${DOC_FULL[docType] || "문서"} 삭제됨`);
+    loadLibrary();
+  };
+
+  // 셀 전체 삭제 — 회사·기간 통째(3문서 + 재무데이터).
+  window.deleteCell = async function(company, period) {
+    if (!confirm(`${company} ${periodLabel(period)} 셀 전체 삭제?\n(모든 문서·재무데이터 영구 삭제)`)) return;
+    let res;
+    try { res = await fetch(`${API}/api/library/${encodeURIComponent(company)}/${encodeURIComponent(period)}`, { method: "DELETE" }); }
+    catch (e) { return toast(`삭제 실패: ${e}`); }
+    if (!res.ok) { const d = await res.json().catch(() => ({})); return toast(`삭제 실패: ${d.detail || res.status}`); }
+    [...SELECTED].forEach(k => { const s = parseSelKey(k); if (s.company === company && s.period === period) SELECTED.delete(k); });
+    toast(`${company} ${periodLabel(period)} 셀 삭제됨`);
+    loadLibrary();
   };
 
   // 문서·fs_div pill 클릭 → 해당 (회사/기간/문서/fs_div) 선택 토글
@@ -1157,6 +1181,105 @@
     pollIndexProgress(company, period, docType);
   };
 
+  // ===== 업로드 PDF 자동 감지(회사/기간/문서유형) — 백엔드 detect_* 휴리스틱 미러 =====
+  const DETECT_DATE_RE = /\((\d{4})(?:[.\-/](\d{1,2}))?(?:[.\-/]\d{1,2})?\)/;
+  function detectCompanyJs(t) {
+    t = t || "";
+    for (const [needle, internal] of [["신한","신한"],["하나금융","하나"],["하나","하나"],
+                                       ["우리금융","우리"],["우리","우리"],["KB금융","KB"],["KB","KB"]]) {
+      if (t.includes(needle)) return internal;
+    }
+    return null;
+  }
+  function detectDocTypeJs(t) {
+    t = t || "";
+    if (t.includes("연결검토")) return "review";
+    if ((t.includes("검토") || t.includes("감사")) && !t.includes("연결")) return "review_sep";
+    if ((t.includes("분기") || t.includes("반기") || t.includes("사업보고서")) && !t.includes("검토") && !t.includes("감사")) return "report";
+    if (t.includes("연결") && (t.includes("검토") || t.includes("감사"))) return "review";
+    return null;
+  }
+  function detectPeriodJs(t) {
+    t = t || "";
+    const m = t.match(DETECT_DATE_RE);
+    const year = m ? m[1] : null;
+    const mon = (m && m[2]) ? parseInt(m[2], 10) : null;
+    let suffix = null;
+    if (t.includes("사업보고서")) suffix = "FY";
+    else if (t.includes("반기")) suffix = "Q2";          // 반기를 분기보다 먼저
+    else if (t.includes("분기")) {
+      if (mon != null && mon >= 3 && mon <= 6) suffix = "Q1";
+      else if (mon != null && (mon >= 10 || mon <= 2)) suffix = "Q3";
+      else suffix = "Q3";                                 // 월 불명 → 보수적
+    }
+    return { year: year, suffix: suffix, period: (year && suffix) ? year + suffix : null };
+  }
+  function detectFromFilename(name) {
+    const per = detectPeriodJs(name);
+    return { company: detectCompanyJs(name), year: per.year, suffix: per.suffix,
+             docType: detectDocTypeJs(name), source: "filename" };
+  }
+
+  let UP_DETECTED = null;  // 마지막 감지 결과(인라인 따옴표 회피 위해 모듈 변수 경유)
+  window.applyDetect = function() {
+    const det = UP_DETECTED; if (!det) return;
+    const setSel = (id, v) => { if (!v) return; const el = document.getElementById(id);
+      if (el && [...el.options].some(o => o.value === v)) el.value = v; };
+    setSel("up-company", det.company); setSel("up-year", det.year);
+    setSel("up-type", det.suffix); setSel("up-doctype", det.docType);
+    document.getElementById("up-detect").classList.add("hidden");
+  };
+  window.dismissDetect = function() { document.getElementById("up-detect").classList.add("hidden"); };
+
+  function renderDetectBanner(det) {
+    const box = document.getElementById("up-detect");
+    UP_DETECTED = det;
+    if (!det || (!det.company && !det.period && !det.docType)) { box.classList.add("hidden"); return; }
+    const cur = {
+      company: document.getElementById("up-company").value,
+      period: composePeriod(document.getElementById("up-year").value, document.getElementById("up-type").value),
+      docType: document.getElementById("up-doctype").value,
+    };
+    const diffs = [];
+    if (det.company && det.company !== cur.company) diffs.push(`회사 <b>${cur.company}→${det.company}</b>`);
+    if (det.period && det.period !== cur.period) diffs.push(`기간 <b>${cur.period}→${det.period}</b>`);
+    if (det.docType && det.docType !== cur.docType) diffs.push(`문서 <b>${(DOC_FULL[cur.docType]||cur.docType)}→${(DOC_FULL[det.docType]||det.docType)}</b>`);
+    if (diffs.length === 0) {
+      box.className = "detect-banner ok";
+      const parts = [det.company, det.period && periodLabel(det.period), det.docType && DOC_FULL[det.docType]].filter(Boolean).join(" · ");
+      box.innerHTML = `✓ 감지 결과가 선택과 일치합니다${parts ? ` (${parts})` : ""}.<span class="detect-x" onclick="dismissDetect()">✕</span>`;
+    } else {
+      box.className = "detect-banner";
+      box.innerHTML = `🔎 PDF에서 감지: ${diffs.join(" · ")} <button class="btn-mini" onclick="applyDetect()">자동 채움</button><span class="detect-x" title="무시" onclick="dismissDetect()">무시 ✕</span>`;
+    }
+    box.classList.remove("hidden");
+  }
+
+  window.onUpFileChange = async function() {
+    const f = document.getElementById("up-file").files[0];
+    const box = document.getElementById("up-detect");
+    if (!f) { box.classList.add("hidden"); return; }
+    let det = detectFromFilename(f.name);
+    // 파일명으로 부족하면 서버에 1페이지 텍스트 폴백 감지 요청.
+    if (!(det.company && det.period && det.docType)) {
+      try {
+        const form = new FormData(); form.append("file", f);
+        const r = await fetch(`${API}/api/library/detect`, { method: "POST", body: form });
+        if (r.ok) {
+          const d = await r.json();
+          const per = d.period || "";
+          det = { company: d.company || det.company,
+                  year: per ? per.slice(0,4) : det.year,
+                  suffix: per ? per.slice(4) : det.suffix,
+                  period: d.period || det.period,
+                  docType: d.doc_type || det.docType, source: d.source || det.source };
+        }
+      } catch (e) { /* 폴백 실패 → 파일명 결과 유지 */ }
+    }
+    if (det.year && det.suffix && !det.period) det.period = det.year + det.suffix;
+    renderDetectBanner(det);
+  };
+
   async function pollIndexProgress(company, period, docType) {
     const status = document.getElementById("up-status");
     const docLabel = (DOC_FULL[docType] || "보고서");
@@ -1217,18 +1340,28 @@
     });
   }
 
-  // 업로드 탭의 DART 수집 버튼(연도+유형 동적)
-  window.doCollect = async function() {
-    const company = document.getElementById("dc-company").value;
-    const period = composePeriod(document.getElementById("dc-year").value, document.getElementById("dc-type").value);
-    const btn = document.getElementById("dc-btn"); btn.disabled = true;
-    await startCollect(company, period, document.getElementById("dc-report").checked, document.getElementById("dc-status"));
-    btn.disabled = false;
+  // ----- 자료 추가 모달(DART 수집 + PDF 업로드 서브탭) -----
+  window.openAddModal = function(sub) {
+    document.getElementById("add-modal-backdrop").classList.remove("hidden");
+    document.getElementById("add-modal").classList.remove("hidden");
+    showAddSub(sub || "collect");
   };
-
-  // ----- 라이브러리 인라인 자료 추가 패널 -----
-  function openAddPanel() { document.getElementById("add-panel").classList.remove("hidden"); }
-  window.toggleAddPanel = function() { document.getElementById("add-panel").classList.toggle("hidden"); };
+  window.closeAddModal = function() {
+    document.getElementById("add-modal").classList.add("hidden");
+    document.getElementById("add-modal-backdrop").classList.add("hidden");
+  };
+  window.showAddSub = function(name) {
+    document.querySelectorAll("#add-modal .modal-subtab").forEach(b => b.classList.toggle("active", b.dataset.sub === name));
+    document.getElementById("add-sub-collect").classList.toggle("hidden", name !== "collect");
+    document.getElementById("add-sub-upload").classList.toggle("hidden", name !== "upload");
+  };
+  // 호환 별칭(기존 호출부 보존) — 인라인 패널 → 모달로 위임.
+  function openAddPanel() { openAddModal("collect"); }
+  window.toggleAddPanel = function() { openAddModal("collect"); };
+  // Esc 로 모달 닫기.
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !document.getElementById("add-modal").classList.contains("hidden")) closeAddModal();
+  });
   window.addEmptyColumn = function() {
     const p = composePeriod(document.getElementById("add-year").value, document.getElementById("add-type").value);
     EXTRA_PERIODS.add(p); saveExtraPeriods(); renderMatrix();

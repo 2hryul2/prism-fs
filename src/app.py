@@ -358,6 +358,36 @@ def remove_catalog_entry(company: str, period: str):
     save_catalog(cat)
 
 
+# report(사업보고서) 전용 카탈로그 필드 — 문서별 삭제 시 이 키들만 제거.
+_REPORT_FIELDS = (
+    "indexed", "notes_count", "notes_count_연결", "notes_count_별도",
+    "detected_unit", "uploaded_at", "filename_original", "original_file",
+    "pages", "size_mb", "source_type", "indexed_at", "report_collected",
+)
+
+
+def _strip_doc_fields(entry: dict, doc_type: str) -> dict:
+    """카탈로그 엔트리에서 해당 doc_type 의 필드만 제거(다른 문서·재무데이터 보존).
+
+    주의(접두 충돌): review_sep_* 도 'review_' 로 시작하므로, review 제거 시
+    review_sep_* 는 반드시 보존해야 한다(아니면 연결 삭제가 별도 데이터까지 날림).
+    """
+    out = dict(entry)
+    if doc_type == "report":
+        for k in _REPORT_FIELDS:
+            out.pop(k, None)
+    elif doc_type == "review":
+        for k in [k for k in out
+                  if k.startswith("review_") and not k.startswith("review_sep_")]:
+            out.pop(k, None)
+        out.pop("review_collected", None)
+    else:  # review_sep
+        for k in [k for k in out if k.startswith("review_sep_")]:
+            out.pop(k, None)
+        out.pop("review_sep_collected", None)
+    return out
+
+
 # ----------------------------------------------------------------------------
 # 임베딩·토큰화
 # ----------------------------------------------------------------------------
@@ -452,6 +482,89 @@ def safe_original_filename(name: Optional[str]) -> Optional[str]:
     return base
 
 
+# ── 업로드 PDF 자동 감지(회사/기간/문서유형) ────────────────────────────────
+# 파일명·1페이지 텍스트로 회사/기간/문서유형을 추정해 사용자에게 "보정 제안".
+# DART 원본 파일명 패턴 예: "[신한지주]분기보고서(2025.11.14).pdf",
+#   "[KB금융]반기연결검토보고서(2025.08.14).pdf". 자동 적용은 안 하고 제안만.
+# 괄호 안 날짜는 '접수월' → 보고서유형 키워드를 1차, 월을 분기 보조판정에만 사용.
+_DETECT_DATE_RE = re.compile(r"\((\d{4})(?:[.\-/](\d{1,2}))?(?:[.\-/]\d{1,2})?\)")
+
+
+def detect_company_from_text(text: str) -> Optional[str]:
+    """텍스트(파일명/본문)에서 내부 회사표기(신한/KB/하나/우리) 추정. 구체어 우선."""
+    t = text or ""
+    # KB 모호성 회피 위해 '금융' 포함 변형을 먼저 검사(부분일치).
+    for needle, internal in (("신한", "신한"), ("하나금융", "하나"), ("하나", "하나"),
+                             ("우리금융", "우리"), ("우리", "우리"),
+                             ("KB금융", "KB"), ("KB", "KB")):
+        if needle in t:
+            return internal
+    return None
+
+
+def detect_doc_type_from_text(text: str) -> Optional[str]:
+    """텍스트에서 문서유형 추정. collect_dart._filename_matches_doc_type 규칙 미러+확장.
+
+    - report     : 분기/반기/사업보고서 & 검토·감사 미포함(본문).
+    - review      : 연결검토(또는 연결+검토/감사) → 연결재무제표.
+    - review_sep  : 검토/감사 & 연결 미포함 → 별도재무제표.
+    """
+    t = text or ""
+    if "연결검토" in t:
+        return "review"
+    if ("검토" in t or "감사" in t) and "연결" not in t:
+        return "review_sep"
+    if (("분기" in t or "반기" in t or "사업보고서" in t)
+            and "검토" not in t and "감사" not in t):
+        return "report"
+    if "연결" in t and ("검토" in t or "감사" in t):  # 연결감사보고서(FY 등)
+        return "review"
+    return None
+
+
+def detect_period_from_text(text: str) -> Optional[str]:
+    """텍스트에서 기간(YYYY + Q1/Q2/Q3/FY) 추정. 없으면 None.
+
+    유형 키워드 1차(사업보고서→FY, 반기→Q2, 분기→Q1/Q3), 월은 분기 보조판정.
+    분기인데 월 불명이면 보수적으로 Q3(접수 폭 넓음).
+    """
+    t = text or ""
+    m = _DETECT_DATE_RE.search(t)
+    year = m.group(1) if m else None
+    mon = int(m.group(2)) if (m and m.group(2)) else None
+    suffix = None
+    if "사업보고서" in t:
+        suffix = "FY"
+    elif "반기" in t:                       # 반기를 분기보다 먼저(반기에 '기'가 들어가도 무관)
+        suffix = "Q2"
+    elif "분기" in t:
+        if mon is not None and 3 <= mon <= 6:
+            suffix = "Q1"
+        elif mon is not None and (mon >= 10 or mon <= 2):
+            suffix = "Q3"
+        else:
+            suffix = "Q3"                   # 월 불명 → 보수적 기본
+    if year and suffix:
+        return f"{year}{suffix}"
+    return None
+
+
+def detect_pdf_meta_from(filename: str, page_text: str = "") -> dict:
+    """파일명 우선 → 부족분만 1페이지 텍스트로 폴백 감지. 항상 dict 반환."""
+    name = filename or ""
+    company = detect_company_from_text(name)
+    period = detect_period_from_text(name)
+    doc_type = detect_doc_type_from_text(name)
+    source = "filename"
+    if page_text and not (company and period and doc_type):
+        company = company or detect_company_from_text(page_text)
+        period = period or detect_period_from_text(page_text)
+        doc_type = doc_type or detect_doc_type_from_text(page_text)
+        if company or period or doc_type:
+            source = "filename+text"
+    return {"company": company, "period": period, "doc_type": doc_type, "source": source}
+
+
 @app.post("/api/library/upload")
 async def upload_to_library(
     file: UploadFile = File(...),
@@ -529,6 +642,26 @@ async def upload_to_library(
         "indexed": False,
         "warning": "기존 항목을 덮어썼습니다." if overwriting else None,
     }
+
+
+@app.post("/api/library/detect")
+async def detect_pdf_meta(file: UploadFile = File(...)):
+    """업로드 전 PDF 자동 감지 — 회사/기간/문서유형 추정값 반환(보정 제안용).
+
+    디스크에 쓰지 않고 카탈로그도 건드리지 않는다(순수 조회). 파일명으로 부족하면
+    1페이지 텍스트를 메모리에서 읽어 폴백. 감지 실패 항목은 null.
+    """
+    name = file.filename or ""
+    meta = detect_pdf_meta_from(name)
+    if not (meta["company"] and meta["period"] and meta["doc_type"]):
+        try:
+            content = await file.read()
+            with fitz.open(stream=content, filetype="pdf") as doc:
+                page1 = doc[0].get_text() if doc.page_count else ""
+            meta = detect_pdf_meta_from(name, page1)
+        except Exception:
+            pass  # 파싱 실패 → 파일명 기반 결과만 반환
+    return meta
 
 
 @app.get("/api/library")
@@ -611,6 +744,56 @@ async def delete_library_entry(company: str, period: str):
     for dt in VALID_DOC_TYPES:
         INDEX_STATUS.pop(f"{company}/{period}/{dt}", None)
     return {"deleted": True, "company": company, "period": period}
+
+
+@app.delete("/api/library/{company}/{period}/doc/{doc_type}")
+async def delete_library_doc(company: str, period: str, doc_type: str):
+    """문서유형별 단건 삭제 — 해당 PDF·인덱스·원본 사본만 제거, 나머지 문서/재무데이터 보존.
+
+    남은 작업본 PDF 가 0개이고 재무데이터(fs_structured.json/xbrl)도 없으면 셀 전체 제거.
+    경로 세그먼트가 4개(.../doc/{doc_type})라 3-세그먼트 셀 삭제 라우트와 충돌하지 않는다.
+    """
+    validate_company(company)
+    validate_period(period)
+    dt = validate_doc_type(doc_type)
+    d = entry_dir(company, period)
+    if not d.exists():
+        raise HTTPException(404, "항목을 찾을 수 없습니다.")
+
+    # 작업본 PDF·인덱스·원본 사본 삭제(표준 작업본명은 원본 사본 삭제에서 제외).
+    wp = pdf_path(company, period, dt)
+    if wp.exists():
+        wp.unlink()
+    ip = index_path(company, period, dt)
+    if ip.exists():
+        ip.unlink()
+    orig = original_pdf_name(company, period, dt)
+    if orig and orig.lower() not in _STANDARD_PDF_NAMES:
+        op = d / orig
+        if op.exists():
+            op.unlink()
+
+    # 카탈로그에서 해당 doc_type 필드만 제거(다른 문서 보존).
+    cat = load_catalog()
+    entry = next((e for e in cat["entries"]
+                  if e["company"] == company and e["period"] == period), None)
+    if entry is not None:
+        cleaned = _strip_doc_fields(entry, dt)
+        fields = {k: v for k, v in cleaned.items() if k not in ("company", "period")}
+        upsert_catalog_entry(company, period, **fields)
+    INDEX_STATUS.pop(f"{company}/{period}/{dt}", None)
+
+    # 남은 PDF 0개 + 재무데이터 없음 → 셀 전체 제거.
+    fs_present = ((d / "fs_structured.json").exists() or any(d.glob("xbrl/*"))
+                 or bool((entry or {}).get("fs_collected")))
+    any_pdf_left = any(pdf_path(company, period, x).exists() for x in VALID_DOC_TYPES)
+    if not any_pdf_left and not fs_present:
+        shutil.rmtree(d, ignore_errors=True)
+        remove_catalog_entry(company, period)
+        for x in VALID_DOC_TYPES:
+            INDEX_STATUS.pop(f"{company}/{period}/{x}", None)
+        return {"deleted": True, "scope": "cell", "company": company, "period": period}
+    return {"deleted": True, "scope": dt, "company": company, "period": period}
 
 
 # ----------------------------------------------------------------------------
