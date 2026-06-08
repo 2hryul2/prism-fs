@@ -945,13 +945,19 @@
       html += `<tr><th class="company-col">${c}</th>`;
       for (const p of periods) {
         const entry = LIBRARY.entries.find(e => e.company === c && e.period === p);
-        // 셀 채움 기준: 분기보고서(report) 인덱싱됨 (그 안에 연결/별도 주석 포함)
-        const anyIndexed = entry && entry.indexed;
+        // 셀 채움 기준: 문서 3종(report/review/review_sep) 중 하나라도 인덱싱·진행 중,
+        // 또는 본문 PDF 없이 재무데이터(XBRL)만 수집된 등록 상태.
+        const anyIndexed = entry && (entry.indexed || entry.review_indexed || entry.review_sep_indexed);
         const st0 = INDEX_STATUS_MAP[`${c}/${p}/report`];
-        const anyRunning = st0 && st0.status === "running";
+        const anyRunning = entry && ["report", "review", "review_sep"].some(d => {
+          const s = INDEX_STATUS_MAP[`${c}/${p}/${d}`]; return s && s.status === "running";
+        });
+        // 수집은 됐으나 주석 미인덱싱(본문 PDF 미확보 등) → 빈칸 대신 '등록됨'으로 표시.
+        const collectedOnly = entry && !anyIndexed && !anyRunning &&
+          (entry.fs_collected || entry.report_collected || entry.review_collected || entry.review_sep_collected);
 
         let inner, cls;
-        if (entry && (anyIndexed || anyRunning)) {
+        if (entry && (anyIndexed || anyRunning || collectedOnly)) {
           // 3-문서 카테고리 pill: 📄사업보고서 / 🏢별도재무제표 / 🔗연결재무제표
           const combos = [{ doc: "report" }, { doc: "review_sep" }, { doc: "review" }];
           inner = `<div class="doc-pills">` + combos.map(({ doc }) => {
@@ -962,7 +968,7 @@
             const label = `${DOC_ICON[doc]} ${DOC_FULL[doc]}`;
             const ttl = DOC_FULL[doc];
             // 인덱싱 진행표시는 report(사업보고서) 기준만. 나머지는 카운트 기반.
-            if (anyRunning && isReport) {
+            if (st0 && st0.status === "running" && isReport) {
               return `<div class="doc-pill indexing${reviewCls}" title="${ttl}">
                         <span class="dp-label">${label}</span>
                         <span class="dp-count">${Math.round((st0.progress||0)*100)}%</span></div>`;
@@ -980,6 +986,10 @@
                       <span class="dp-label">${isSel ? '✓ ' : ''}${label}</span>
                       <span class="dp-count">${cnt}</span></div>`;
           }).join("") + `</div>`;
+          // 재무데이터만 수집된 등록 상태 — 빈 셀과 구분되는 안내(본문 PDF 업로드 시 주석 추출).
+          if (collectedOnly) {
+            inner += `<div style="font-size:10px;color:#6b7280;margin-top:5px;text-align:center;" title="DART 재무데이터(XBRL) 수집 완료. 주석 추출은 본문 PDF 업로드 후 가능합니다.">📊 재무데이터 수집됨 · 본문 PDF 필요</div>`;
+          }
           cls = anyRunning ? "indexing" : "filled";
         } else {
           inner = `<div class="icon">＋</div><div class="badge">업로드</div>`;

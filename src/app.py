@@ -1251,7 +1251,13 @@ def _collect_company_blocking(company: str, year: int, reprt: str,
 
 
 async def _collect_and_index(company: str, period: str, want_report: bool):
-    """백그라운드: DART 수집(스레드) → 확보된 표시용 PDF(doc_type) 자동 인덱싱."""
+    """백그라운드: DART 수집(스레드) → 카탈로그 등록 → 확보된 표시용 PDF 자동 인덱싱.
+
+    - 카탈로그 등록은 인덱싱 성공과 분리한다. 본문 PDF 를 못 받아도(재무데이터=XBRL 만
+      수집) 라이브러리에 등록돼야 한다(과거: 인덱싱 0건이면 미등록 → 셀이 빈칸으로 남음).
+    - 인덱싱은 불안정한 *_collected 플래그가 아니라 '디스크에 실제 존재하는 PDF' 기준으로
+      수행한다(이전 수집/수동 업로드분 + review_sep 까지 누락 없이 인덱싱).
+    """
     key = f"{company}/{period}"
     COLLECT_STATUS[key] = {"status": "running", "stage": "collecting"}
     try:
@@ -1264,25 +1270,47 @@ async def _collect_and_index(company: str, period: str, want_report: bool):
 
     report_ok = bool(meta.get("report_collected"))
     review_ok = bool(meta.get("review_collected"))
+    review_sep_ok = bool(meta.get("review_sep_collected"))
+    fs_ok = (entry_dir(company, period) / "fs_structured.json").exists()
+
+    # (1) 수집 시점에 카탈로그 등록 — 인덱싱과 독립. 기존 행 필드는 보존(머지).
+    existing = next((e for e in load_catalog()["entries"]
+                     if e["company"] == company and e["period"] == period), {})
+    existing = {k: v for k, v in existing.items() if k not in ("company", "period")}
+    upsert_catalog_entry(company, period, **{
+        **existing,
+        "rcept_no": meta.get("rcept_no"),
+        "report_nm": meta.get("report_nm"),
+        "report_collected": report_ok,
+        "review_collected": review_ok,
+        "review_sep_collected": review_sep_ok,
+        "fs_collected": fs_ok,
+        "collected_at": datetime.now(timezone.utc).isoformat(),
+    })
+
     COLLECT_STATUS[key] = {"status": "indexing", "stage": "indexing",
-                           "report_collected": report_ok, "review_collected": review_ok}
+                           "report_collected": report_ok, "review_collected": review_ok,
+                           "review_sep_collected": review_sep_ok}
+
+    # (2) 디스크에 존재하는 표시용 PDF 인덱싱(플래그가 아닌 실제 파일 기준 — review_sep 포함).
     indexed: List[str] = []
     try:
-        if report_ok and pdf_path(company, period, "report").exists():
-            await index_entry(company, period, "report")
-            indexed.append("report")
-        if review_ok and pdf_path(company, period, "review").exists():
-            await index_entry(company, period, "review")
-            indexed.append("review")
+        for dt in ("report", "review", "review_sep"):
+            if pdf_path(company, period, dt).exists():
+                await index_entry(company, period, dt)
+                indexed.append(dt)
     except Exception as e:
         COLLECT_STATUS[key] = {"status": "error", "error": _safe_err(e),
-                               "report_collected": report_ok, "review_collected": review_ok}
+                               "report_collected": report_ok, "review_collected": review_ok,
+                               "review_sep_collected": review_sep_ok}
         return
 
     COLLECT_STATUS[key] = {
         "status": "done",
         "report_collected": report_ok,
         "review_collected": review_ok,
+        "review_sep_collected": review_sep_ok,
+        "fs_collected": fs_ok,
         "indexed": indexed,
         "rcept_no": meta.get("rcept_no"),
         "report_nm": meta.get("report_nm"),
