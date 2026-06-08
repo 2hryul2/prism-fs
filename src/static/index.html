@@ -118,6 +118,11 @@
   .info-banner { background: #eff4ff; border: 1px solid #c7d6ff; border-radius: 8px; padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: #1e3a8a; }
   .warn-banner { background: #fef9e7; border-left: 4px solid #f59e0b; border-radius: 4px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px; color: #78350f; }
   .footer-note { margin-top: 20px; padding: 10px 14px; font-size: 11px; color: #6b7280; background: #f9fafb; border-radius: 6px; }
+  /* RAG 탭 내부 서브탭 (자연어 질의 / 온톨로지) */
+  .rag-subtabs { display: flex; gap: 4px; border-bottom: 2px solid #ede9fe; margin-bottom: 18px; }
+  .rag-subtab { padding: 9px 16px; background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; font-size: 14px; font-weight: 600; color: #9ca3af; cursor: pointer; }
+  .rag-subtab:hover { color: #5b21b6; }
+  .rag-subtab.active { color: #5b21b6; border-bottom-color: #5b21b6; }
 
   .toast { position: fixed; bottom: 24px; right: 24px; background: #1f2937; color: white; padding: 12px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
   .toast.show { opacity: 1; }
@@ -172,7 +177,7 @@
   .kg-rel-table td.rel-card { color: #6b7280; font-size: 12px; }
 
   /* ===== 회계 개념 온톨로지 · Graph-RAG 설명가능 검색 (RAG 탭 통합, kgx- 네임스페이스로 격리) ===== */
-  #kgx-explorer { margin-top: 22px; border-top: 1px dashed #e5e7eb; padding-top: 18px; }
+  #kgx-explorer { margin-top: 2px; }
   #kgx-explorer * { box-sizing: border-box; }
   #kgx-explorer .kgx-head { display:flex; align-items:baseline; gap:10px; margin-bottom:12px; flex-wrap:wrap; }
   #kgx-explorer .kgx-head h3 { font-size:15px; font-weight:700; color:#1f2937; }
@@ -461,6 +466,13 @@
 
   <!-- Tab: 주석 자연어 질의 (AI 보조) — §5.4 RAG, 옵트인·인용 강제 -->
   <div id="tab-rag" class="panel hidden">
+    <div class="rag-subtabs">
+      <button class="rag-subtab active" data-sub="nlq" onclick="showRagSub('nlq')">🤖 주석 자연어 질의</button>
+      <button class="rag-subtab" data-sub="onto" onclick="showRagSub('onto')">🕸️ 회계 개념 온톨로지 · Graph-RAG</button>
+    </div>
+
+    <!-- 서브탭 ①: 주석 자연어 질의 -->
+    <div id="rag-sub-nlq" class="rag-sub">
     <h2 style="font-size:17px; font-weight:700; color:#5b21b6;">🤖 주석 자연어 질의 <span style="font-size:12px; color:#5b21b6; background:#ede9fe; border-radius:999px; padding:2px 9px; font-weight:700;">AI 보조 · 인용 강제</span></h2>
     <p style="color:#6b7280; font-size:13px; margin:6px 0 12px;">
       4사 주석 본문에 자연어로 질의합니다. <strong>숫자는 생성하지 않으며</strong>(정량은 재무제표 비교 탭),
@@ -476,7 +488,13 @@
     </div>
     <div id="suggest-rag" class="suggest-area" data-target="rag-q"></div>
     <div id="rag-result"></div>
+    <div class="footer-note">
+      ℹ️ AI 답변(보라 박스)은 주석 텍스트 기반이며 출처 인용을 동반합니다. 숫자 재구성·단위 환산은 하지 않습니다(human-in-the-loop 검증 필요).
+    </div>
+    </div><!-- /rag-sub-nlq -->
 
+    <!-- 서브탭 ②: 회계 개념 온톨로지 · Graph-RAG -->
+    <div id="rag-sub-onto" class="rag-sub hidden">
     <!-- 통합: 회계 개념 온톨로지 · Graph-RAG 설명 가능한 검색 (kgx- 네임스페이스 격리) -->
     <div id="kgx-explorer">
       <div class="kgx-head">
@@ -547,11 +565,8 @@
         ④ 피드백 → pending 엣지 → 검수 승격의 <b>자가개선 선순환</b>.
         <br>※ 온톨로지 샘플은 대표 회계 개념 손제작본이며, 실제 운영 시 4사 주석 인덱스·검수표와 연동됩니다.
       </div>
-    </div>
-
-    <div class="footer-note">
-      ℹ️ AI 답변(보라 박스)은 주석 텍스트 기반이며 출처 인용을 동반합니다. 숫자 재구성·단위 환산은 하지 않습니다(human-in-the-loop 검증 필요).
-    </div>
+    </div><!-- /kgx-explorer -->
+    </div><!-- /rag-sub-onto -->
   </div>
 
   <!-- Tab: 재무제표 비교 (fs_compare 결정론 엔진) -->
@@ -878,12 +893,21 @@
     // 비교조회 탭에서만 좌우 여백 최소화(PDF 뷰어 폭 최대화).
     document.body.classList.toggle("cmp-wide", name === "compare");
     if (name === "library") loadLibrary();
-    if (name === "rag" && window.kgxOnShow) window.kgxOnShow();
     if (name === "compare") renderTargetsBar();
     if (name === "fs") loadFsTab();
     if (name === "coverage") loadInsight();
     if (name === "xbrl") loadXbrlTagging();
   }
+
+  // RAG 탭 서브탭 전환 (자연어 질의 / 온톨로지). 온톨로지 진입 시 그래프 재가열.
+  window.showRagSub = function(name) {
+    document.querySelectorAll("#tab-rag .rag-subtab").forEach(b => b.classList.toggle("active", b.dataset.sub === name));
+    const nlq = document.getElementById("rag-sub-nlq");
+    const onto = document.getElementById("rag-sub-onto");
+    if (nlq) nlq.classList.toggle("hidden", name !== "nlq");
+    if (onto) onto.classList.toggle("hidden", name !== "onto");
+    if (name === "onto" && window.kgxOnShow) window.kgxOnShow();
+  };
 
   // ----- Library -----
   async function loadLibrary() {
